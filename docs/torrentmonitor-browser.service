@@ -1,37 +1,52 @@
 [Unit]
-Description=TorrentMonitor Chromium in Weston Headless
-After=network-online.target
+Description=TorrentMonitor Chromium in headless Weston
+Documentation=https://github.com/lifespirit/TorrentMonitor-go/blob/main/docs/CHROMIUM_WESTON.md
 Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
+User=torrentmonitor
+Group=torrentmonitor
 
-Environment=XDG_RUNTIME_DIR=%t/torrentmonitor-weston
-
-ExecStartPre=/usr/bin/install -d -m 0700 %t/torrentmonitor-weston
-ExecStartPre=-/usr/bin/rm -f %t/torrentmonitor-weston/wayland-headless
-ExecStartPre=-/usr/bin/rm -f %t/torrentmonitor-weston/wayland-headless.lock
+Environment=HOME=/var/lib/torrentmonitor
+Environment=XDG_RUNTIME_DIR=/run/torrentmonitor-weston
+RuntimeDirectory=torrentmonitor-weston
+RuntimeDirectoryMode=0700
+WorkingDirectory=/var/lib/torrentmonitor
 
 ExecStart=/usr/bin/weston \
     --backend=headless \
+    --shell=kiosk-shell.so \
     --socket=wayland-headless \
     --width=1920 \
     --height=1080 \
     --renderer=pixman \
     --idle-time=0 \
     -- \
-    /usr/bin/env WAYLAND_DEBUG=client \
     /usr/bin/chromium \
         --remote-debugging-address=127.0.0.1 \
         --remote-debugging-port=9222 \
-        --user-data-dir=%h/.local/share/torrentmonitor-go/browser/torrentmonitor \
+        --user-data-dir=/var/lib/torrentmonitor/.local/share/torrentmonitor-go/browser/torrentmonitor \
         --no-first-run \
         --no-default-browser-check \
+        --disable-dev-shm-usage \
         --ozone-platform=wayland \
+        --enable-logging=stderr \
         about:blank
 
 Restart=on-failure
-RestartSec=3
+RestartSec=3s
+TimeoutStopSec=30s
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/torrentmonitor
+
+StandardOutput=journal
+StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
