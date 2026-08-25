@@ -189,8 +189,8 @@ var browserViewerTemplate = template.Must(template.New("browser-viewer").Parse(`
 <header>
   <strong>Browser session {{.ID}}</strong>
   <span id="status">подключение…</span>
-  <button id="done" type="button">Готово</button>
-  <button id="close" type="button">Закрыть</button>
+  <button id="done" type="button">Продолжить</button>
+  <button id="close" type="button">Закрыть вкладку</button>
   <input id="address" type="text" aria-label="Адрес" placeholder="https://chromewebstore.google.com/">
   <button id="navigate" type="button">Перейти</button>
 </header>
@@ -217,6 +217,7 @@ async function refreshInfo() {
     statusEl.textContent = (j.status || 'unknown') + ' · viewport ' + (viewportW || '?') + 'x' + (viewportH || '?') + cookieStatus;
     const currentURL = j.current_url || j.url || '';
     if (document.activeElement !== addressEl && currentURL) addressEl.value = currentURL;
+    document.getElementById('done').hidden = j.tracker === 'torrentmonitor-extensions';
   } catch (e) {
     statusEl.textContent = e.message;
   }
@@ -346,6 +347,7 @@ document.getElementById('done').addEventListener('click', async () => {
   const r = await fetch('/api/v1/browser/sessions/' + encodeURIComponent(id) + '/done', {method:'POST'});
   const j = await r.json();
   alert(j.message || 'Готово');
+  if (r.ok && j.session && j.session.status === 'user_done') window.close();
 });
 document.getElementById('close').addEventListener('click', async () => {
   await fetch('/api/v1/browser/sessions/' + encodeURIComponent(id), {method:'DELETE'});
