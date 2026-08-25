@@ -8,7 +8,7 @@ domains:
   - tapochek.net
 
 defaults:
-  access_mode: chromium
+  access_mode: native
   timezone: Europe/Moscow
   page_timeout_seconds: 30
 
