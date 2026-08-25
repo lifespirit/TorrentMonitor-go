@@ -655,8 +655,18 @@ func (s *Service) CheckTorrent(ctx context.Context, id int64) (TorrentCheckResul
 	}
 	cred := findCredential(credentials, item.Tracker)
 	var browser sitetpl.BrowserPageFetcher
+	releaseBrowserSession := false
 	if cred.AccessMode == AccessModeChromium {
 		browser = s.browser
+		releaseBrowserSession = s.browser != nil
+		defer func() {
+			if !releaseBrowserSession {
+				return
+			}
+			if closeErr := s.browser.CloseTracker(item.Tracker); closeErr != nil && !errors.Is(closeErr, browserbroker.ErrSessionNotFound) {
+				s.logger.Warn("failed to close Chromium tracker page", "tracker", item.Tracker, "error", closeErr)
+			}
+		}()
 	}
 	result, err := s.runner.Check(ctx, sitetpl.CheckRequest{
 		Item: sitetpl.Item{
@@ -677,6 +687,11 @@ func (s *Service) CheckTorrent(ctx context.Context, id int64) (TorrentCheckResul
 		Browser: browser,
 	})
 	if err != nil {
+		// An interactive challenge is the only reason to retain a live page.
+		// The user needs that exact target to finish CAPTCHA or authentication.
+		if needsBrowserInteraction(err) != nil {
+			releaseBrowserSession = false
+		}
 		s.handleTorrentCheckError(ctx, item, err)
 		return TorrentCheckResult{}, err
 	}

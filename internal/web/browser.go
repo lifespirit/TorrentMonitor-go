@@ -84,6 +84,18 @@ func (s *Server) apiBrowserSessionByID(w http.ResponseWriter, r *http.Request) {
 		writeBrowserJSON(w, map[string]any{"ok": err == nil}, err)
 		return
 	}
+	if r.Method == http.MethodPost && action == "navigate" {
+		var req struct {
+			URL string `json:"url"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		err := s.browser.Navigate(r.Context(), id, req.URL)
+		writeBrowserJSON(w, map[string]any{"ok": err == nil}, err)
+		return
+	}
 	if r.Method == http.MethodPost && action == "done" {
 		info, err := s.browser.Done(r.Context(), id)
 		message := "Сессия помечена как проверенная. Повтори проверку логина или темы."
@@ -162,10 +174,11 @@ var browserViewerTemplate = template.Must(template.New("browser-viewer").Parse(`
 <style>
   :root { color-scheme: dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#10141d; color:#edf2ff; }
   body { margin:0; min-height:100vh; display:flex; flex-direction:column; }
-  header { display:flex; gap:12px; align-items:center; padding:12px 16px; border-bottom:1px solid #263246; background:#151b27; }
+  header { display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding:12px 16px; border-bottom:1px solid #263246; background:#151b27; }
   header strong { margin-right:auto; }
   button { border:1px solid #46566f; background:#202a3b; color:#edf2ff; border-radius:8px; padding:8px 12px; cursor:pointer; }
   button:hover { background:#2b3850; }
+  #address { flex:1 1 520px; min-width:220px; border:1px solid #46566f; background:#0f1520; color:#edf2ff; border-radius:8px; padding:8px 10px; }
   #status { color:#9fb0ca; font-size:14px; }
   main { flex:1; display:grid; place-items:center; overflow:auto; padding:12px; }
   #screen { background:#000; max-width:100%; height:auto; outline:none; border:1px solid #263246; box-shadow:0 16px 50px rgba(0,0,0,.35); }
@@ -176,8 +189,10 @@ var browserViewerTemplate = template.Must(template.New("browser-viewer").Parse(`
 <header>
   <strong>Browser session {{.ID}}</strong>
   <span id="status">подключение…</span>
-  <button id="done" type="button">Готово</button>
-  <button id="close" type="button">Закрыть</button>
+  <button id="done" type="button">Продолжить</button>
+  <button id="close" type="button">Закрыть вкладку</button>
+  <input id="address" type="text" aria-label="Адрес" placeholder="https://chromewebstore.google.com/">
+  <button id="navigate" type="button">Перейти</button>
 </header>
 <main>
   <img id="screen" tabindex="0" alt="Chromium screencast">
@@ -187,6 +202,7 @@ var browserViewerTemplate = template.Must(template.New("browser-viewer").Parse(`
 const id = {{printf "%q" .ID}};
 const img = document.getElementById('screen');
 const statusEl = document.getElementById('status');
+const addressEl = document.getElementById('address');
 let viewportW = 0;
 let viewportH = 0;
 
@@ -199,6 +215,9 @@ async function refreshInfo() {
     viewportH = Number(j.height || viewportH || 0);
     const cookieStatus = j.has_cloudflare_clearance ? ' · cf_clearance' : (j.cookie_names && j.cookie_names.length ? ' · cookies: ' + j.cookie_names.join(',') : '');
     statusEl.textContent = (j.status || 'unknown') + ' · viewport ' + (viewportW || '?') + 'x' + (viewportH || '?') + cookieStatus;
+    const currentURL = j.current_url || j.url || '';
+    if (document.activeElement !== addressEl && currentURL) addressEl.value = currentURL;
+    document.getElementById('done').hidden = j.tracker === 'torrentmonitor-extensions';
   } catch (e) {
     statusEl.textContent = e.message;
   }
@@ -311,10 +330,24 @@ document.addEventListener('paste', e => {
   e.preventDefault();
   e.stopPropagation();
 }, true);
+async function navigate() {
+  const url = addressEl.value.trim();
+  if (!url) return;
+  const r = await fetch('/api/v1/browser/sessions/' + encodeURIComponent(id) + '/navigate', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url})
+  });
+  const j = await r.json();
+  if (!r.ok) alert(j.message || r.statusText);
+}
+document.getElementById('navigate').addEventListener('click', navigate);
+addressEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); navigate(); }
+});
 document.getElementById('done').addEventListener('click', async () => {
   const r = await fetch('/api/v1/browser/sessions/' + encodeURIComponent(id) + '/done', {method:'POST'});
   const j = await r.json();
   alert(j.message || 'Готово');
+  if (r.ok && j.session && j.session.status === 'user_done') window.close();
 });
 document.getElementById('close').addEventListener('click', async () => {
   await fetch('/api/v1/browser/sessions/' + encodeURIComponent(id), {method:'DELETE'});
