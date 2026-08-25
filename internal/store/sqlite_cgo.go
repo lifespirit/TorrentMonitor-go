@@ -786,7 +786,6 @@ func kvFromSettings(settings core.Settings) map[string]string {
 		"delete_distribution":              boolString(settings.DeleteDistribution),
 		"server_address":                   settings.ServerAddress,
 		"debug":                            boolString(settings.Debug),
-		"rss":                              boolString(settings.RSS),
 		"auto_update":                      boolString(settings.AutoUpdate),
 		"http_timeout_seconds":             strconv.Itoa(settings.HTTPTimeoutSeconds),
 		"monitor_interval_minutes":         strconv.Itoa(settings.MonitorIntervalMinutes),
@@ -883,9 +882,6 @@ func settingsFromKV(values map[string]string) core.Settings {
 	}
 	if v, ok := values["debug"]; ok {
 		settings.Debug = parseSettingBool(v)
-	}
-	if v, ok := values["rss"]; ok {
-		settings.RSS = parseSettingBool(v)
 	}
 	if v, ok := values["auto_update"]; ok {
 		settings.AutoUpdate = parseSettingBool(v)

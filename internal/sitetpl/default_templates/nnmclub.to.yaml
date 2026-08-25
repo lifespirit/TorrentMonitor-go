@@ -27,7 +27,6 @@ urls:
   topic: https://nnmclub.to/forum/viewtopic.php?t={{ item.torrent_id }}
 
 http:
-  user_agent_setting: userAgent
   proxy: inherit
 
 auth:

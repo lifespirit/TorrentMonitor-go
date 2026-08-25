@@ -434,8 +434,7 @@ function renderSettings(s) {
 			<input id="set-admin-password" type="password" value="" placeholder="${s.auth_password_set ? "оставить пустым, чтобы не менять" : "задайте пароль"}" ${s.auth ? "" : "disabled"}>
           </label>
           <div class="form-field c-muted">Пароль: ${s.auth_password_set ? "задан" : "не задан; авторизация не активна"}</div>
-          ${renderCheck("set-rss", "RSS включён", s.rss)}
-          ${renderCheck("set-debug", "Debug", s.debug)}
+          ${renderCheck("set-debug", "Отладка Chromium", s.debug)}
           ${renderCheck("set-auto-update", "Автообновление системы", s.auto_update)}
           <label class="form-field">
             <span>HTTP timeout, сек</span>
@@ -450,7 +449,7 @@ function renderSettings(s) {
             <input id="set-post-update-script" type="text" value="${escapeAttr(s.post_update_script || "")}" placeholder="/path/to/script.sh или команда">
           </label>
           <label class="form-field form-field--wide">
-            <span>User-Agent</span>
+            <span>User-Agent для Native HTTP</span>
             <input id="set-user-agent" type="text" value="${escapeAttr(s.user_agent || "")}">
           </label>
         </div>
@@ -725,10 +724,9 @@ function option(value, label, current) {
 
 async function saveSettings(e) {
   e.preventDefault()
-  const body = {
-    auth: $("#set-auth").checked,
-    rss: $("#set-rss").checked,
-    debug: $("#set-debug").checked,
+	const body = {
+		auth: $("#set-auth").checked,
+		debug: $("#set-debug").checked,
     auto_update: $("#set-auto-update").checked,
     http_timeout_seconds: Number($("#set-http-timeout").value || 15),
     monitor_interval_minutes: Number($("#set-monitor-interval").value || 15),

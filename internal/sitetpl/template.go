@@ -52,9 +52,8 @@ type Encoding struct {
 }
 
 type HTTPConfig struct {
-	BaseURL          string `json:"base_url" yaml:"base_url"`
-	UserAgentSetting string `json:"user_agent_setting" yaml:"user_agent_setting"`
-	Proxy            string `json:"proxy" yaml:"proxy"`
+	BaseURL string `json:"base_url" yaml:"base_url"`
+	Proxy   string `json:"proxy" yaml:"proxy"`
 }
 
 type Auth struct {
