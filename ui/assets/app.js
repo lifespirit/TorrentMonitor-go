@@ -4,6 +4,8 @@ const state = {
   dir: "asc",
   filter: "",
   torrents: [],
+  torrentPage: 1,
+  torrentPageSize: 10,
   warnings: [],
   credentials: [],
   scheduler: {jobs: []},
@@ -45,7 +47,10 @@ async function init() {
 async function loadBootstrap() {
   state.bootstrap = await api("/api/v1/bootstrap")
   document.querySelector('[data-bind="version"]').textContent = `${state.bootstrap.version.app} / ${state.bootstrap.version.database}`
-  $("#warnings-count").textContent = state.bootstrap.counters.warnings
+  const warningsBadge = $("#warnings-count")
+  const warningsCount = Number(state.bootstrap.counters.warnings) || 0
+  warningsBadge.textContent = warningsCount
+  warningsBadge.hidden = warningsCount === 0
   const logout = $("#logout")
   if (logout) logout.hidden = !(state.bootstrap.auth && state.bootstrap.auth.enabled && state.bootstrap.auth.authenticated)
 }
@@ -90,6 +95,7 @@ function bindEvents() {
 
   $("#filter").addEventListener("input", debounce(async (e) => {
     state.filter = e.target.value
+    state.torrentPage = 1
     if (state.page === "torrents") await loadTorrents()
   }, 200))
 
@@ -118,6 +124,7 @@ function bindEvents() {
 async function setSort(sort) {
   if (state.sort === sort) state.dir = state.dir === "asc" ? "desc" : "asc"
   state.sort = sort
+  state.torrentPage = 1
   document.querySelectorAll(".top-bar__sort .btn").forEach((x) => x.classList.remove("--active"))
   $(`#sort-${sort}`).classList.add("--active")
   if (state.page !== "torrents") await showPage("torrents")
@@ -160,6 +167,8 @@ async function loadTorrents() {
   const qs = new URLSearchParams({sort: state.sort, dir: state.dir, filter: state.filter})
   const data = await api(`/api/v1/torrents?${qs}`)
   state.torrents = data.items || []
+  const totalPages = Math.max(1, Math.ceil(state.torrents.length / state.torrentPageSize))
+  state.torrentPage = Math.min(state.torrentPage, totalPages)
   renderTorrents()
 }
 
@@ -169,7 +178,10 @@ function renderTorrents() {
     el.innerHTML = `<div class="card c-muted">Нет тем для мониторинга</div>`
     return
   }
-  el.innerHTML = state.torrents.map(renderTorrent).join("")
+  const totalPages = Math.ceil(state.torrents.length / state.torrentPageSize)
+  const offset = (state.torrentPage - 1) * state.torrentPageSize
+  const pageItems = state.torrents.slice(offset, offset + state.torrentPageSize)
+  el.innerHTML = pageItems.map(renderTorrent).join("") + renderTorrentPagination(totalPages)
   el.querySelectorAll("[data-edit]").forEach((btn) => {
     btn.addEventListener("click", async () => openEditModal(btn.dataset.edit))
   })
@@ -184,6 +196,23 @@ function renderTorrents() {
   el.querySelectorAll("[data-check]").forEach((btn) => {
     btn.addEventListener("click", async () => checkTorrentItem(btn.dataset.check))
   })
+  el.querySelectorAll("[data-torrent-page]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.torrentPage = Number(btn.dataset.torrentPage)
+      renderTorrents()
+      window.scrollTo({top: 0, behavior: "smooth"})
+    })
+  })
+}
+
+function renderTorrentPagination(totalPages) {
+  if (totalPages <= 1) return ""
+  return `
+    <nav class="pagination" aria-label="Страницы раздач">
+      <button class="btn" type="button" data-torrent-page="${state.torrentPage - 1}" ${state.torrentPage === 1 ? "disabled" : ""}>Назад</button>
+      <span class="pagination__status">Страница ${state.torrentPage} из ${totalPages}</span>
+      <button class="btn" type="button" data-torrent-page="${state.torrentPage + 1}" ${state.torrentPage === totalPages ? "disabled" : ""}>Вперёд</button>
+    </nav>`
 }
 
 function renderTorrent(item) {
