@@ -524,6 +524,23 @@ func (b *Broker) Close(id string) error {
 	return nil
 }
 
+// CloseTracker closes the live page associated with tracker. Browser profile
+// data (including cookies) remains in the shared Chromium profile, so the next
+// check can open a clean page without losing an authenticated session.
+func (b *Broker) CloseTracker(tracker string) error {
+	tracker = normalizeName(tracker)
+	if tracker == "" {
+		tracker = "default"
+	}
+	b.mu.Lock()
+	id := b.byTracker[tracker]
+	b.mu.Unlock()
+	if id == "" {
+		return ErrSessionNotFound
+	}
+	return b.Close(id)
+}
+
 func (b *Broker) List() []SessionInfo {
 	b.mu.Lock()
 	defer b.mu.Unlock()
