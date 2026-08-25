@@ -23,6 +23,8 @@ import (
 
 var ErrSessionNotFound = errors.New("browser session not found")
 
+const interactionSessionTTL = time.Hour
+
 type noopLogger struct{}
 
 func (noopLogger) Info(string, ...any)  {}
@@ -150,10 +152,14 @@ func (b *Broker) Open(ctx context.Context, req OpenRequest) (OpenResult, error) 
 	if id := b.byTracker[tracker]; id != "" {
 		if s := b.sessions[id]; s != nil && !s.isClosed() {
 			b.mu.Unlock()
+			info := s.Status()
+			if info.Status == "needs_interaction" {
+				return OpenResult{ID: info.ID, Tracker: info.Tracker, URL: info.URL, ProfilePath: info.ProfilePath, ViewerURL: "/browser/session/" + info.ID, Status: info.Status, CreatedAt: info.CreatedAt}, nil
+			}
 			if err := s.Navigate(ctx, rawURL); err != nil {
 				return OpenResult{}, err
 			}
-			info := s.Status()
+			info = s.Status()
 			return OpenResult{ID: info.ID, Tracker: info.Tracker, URL: rawURL, ProfilePath: info.ProfilePath, ViewerURL: "/browser/session/" + info.ID, Status: info.Status, CreatedAt: info.CreatedAt}, nil
 		}
 	}
@@ -389,6 +395,7 @@ func (b *Broker) FetchPageWait(ctx context.Context, tracker string, rawURL strin
 	if strings.TrimSpace(lastMissing) != "" {
 		msg += "; missing=" + lastMissing
 	}
+	b.retainInteraction(opened.ID, interactionSessionTTL)
 	return nil, &NeedsInteractionError{
 		Tracker:   normalizeName(tracker),
 		URL:       rawURL,
@@ -504,7 +511,40 @@ func (b *Broker) Done(ctx context.Context, id string) (SessionInfo, error) {
 	if s == nil {
 		return SessionInfo{}, ErrSessionNotFound
 	}
-	return s.MarkDone(ctx)
+	info, err := s.MarkDone(ctx)
+	if err != nil {
+		return info, err
+	}
+	if info.Status == "needs_interaction" {
+		b.retainInteraction(id, interactionSessionTTL)
+		return info, nil
+	}
+	// Cookies live in the shared profile, not in the page target. Once the user
+	// has finished the challenge there is no reason to keep its renderer alive.
+	if err := b.Close(id); err != nil && !errors.Is(err, ErrSessionNotFound) {
+		return info, err
+	}
+	return info, nil
+}
+
+func (b *Broker) retainInteraction(id string, ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = interactionSessionTTL
+	}
+	s := b.session(id)
+	if s == nil {
+		return
+	}
+	s.setStatus("needs_interaction")
+	time.AfterFunc(ttl, func() {
+		current := b.session(id)
+		if current == nil || current.Status().Status != "needs_interaction" {
+			return
+		}
+		if err := b.Close(id); err == nil {
+			b.logger.Info("closed expired interactive browser session", "session", id, "tracker", current.tracker, "ttl", ttl)
+		}
+	})
 }
 
 func (b *Broker) Close(id string) error {

@@ -1,6 +1,15 @@
 package browserbroker
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+type discardLogger struct{}
+
+func (discardLogger) Info(string, ...any)  {}
+func (discardLogger) Warn(string, ...any)  {}
+func (discardLogger) Error(string, ...any) {}
 
 func TestCloseTrackerRemovesAndClosesSession(t *testing.T) {
 	session := &Session{tracker: "rutracker.org", status: "running", closed: make(chan struct{})}
@@ -20,6 +29,25 @@ func TestCloseTrackerRemovesAndClosesSession(t *testing.T) {
 	}
 	if !session.isClosed() {
 		t.Fatal("session was not closed")
+	}
+}
+
+func TestRetainedInteractionSessionExpires(t *testing.T) {
+	session := &Session{tracker: "rutracker.org", status: "running", closed: make(chan struct{})}
+	broker := &Broker{
+		sessions:  map[string]*Session{"session-1": session},
+		byTracker: map[string]string{"rutracker.org": "session-1"},
+		logger:     discardLogger{},
+	}
+
+	broker.retainInteraction("session-1", 10*time.Millisecond)
+	select {
+	case <-session.closed:
+	case <-time.After(time.Second):
+		t.Fatal("interactive session was not closed after TTL")
+	}
+	if got := len(broker.sessions); got != 0 {
+		t.Fatalf("sessions left = %d, want 0", got)
 	}
 }
 
