@@ -96,6 +96,23 @@ func (s *Server) apiBrowserSessionByID(w http.ResponseWriter, r *http.Request) {
 		writeBrowserJSON(w, map[string]any{"ok": err == nil}, err)
 		return
 	}
+	if r.Method == http.MethodGet && action == "tabs" {
+		tabs, err := s.browser.Tabs(r.Context(), id)
+		writeBrowserJSON(w, map[string]any{"items": tabs}, err)
+		return
+	}
+	if r.Method == http.MethodPost && action == "switch-tab" {
+		var req struct {
+			TargetID string `json:"target_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		err := s.browser.SwitchTab(r.Context(), id, req.TargetID)
+		writeBrowserJSON(w, map[string]any{"ok": err == nil}, err)
+		return
+	}
 	if r.Method == http.MethodPost && action == "done" {
 		info, err := s.browser.Done(r.Context(), id)
 		message := "Сессия помечена как проверенная. Повтори проверку логина или темы."
@@ -179,6 +196,7 @@ var browserViewerTemplate = template.Must(template.New("browser-viewer").Parse(`
   button { border:1px solid #46566f; background:#202a3b; color:#edf2ff; border-radius:8px; padding:8px 12px; cursor:pointer; }
   button:hover { background:#2b3850; }
   #address { flex:1 1 520px; min-width:220px; border:1px solid #46566f; background:#0f1520; color:#edf2ff; border-radius:8px; padding:8px 10px; }
+  #tabs { flex:1 1 420px; min-width:220px; border:1px solid #46566f; background:#0f1520; color:#edf2ff; border-radius:8px; padding:8px 10px; }
   #status { color:#9fb0ca; font-size:14px; }
   main { flex:1; display:grid; place-items:center; overflow:auto; padding:12px; }
   #screen { background:#000; max-width:100%; height:auto; outline:none; border:1px solid #263246; box-shadow:0 16px 50px rgba(0,0,0,.35); }
@@ -193,6 +211,7 @@ var browserViewerTemplate = template.Must(template.New("browser-viewer").Parse(`
   <button id="close" type="button">Закрыть вкладку</button>
   <input id="address" type="text" aria-label="Адрес" placeholder="https://chromewebstore.google.com/">
   <button id="navigate" type="button">Перейти</button>
+  <select id="tabs" aria-label="Открытые вкладки"></select>
 </header>
 <main>
   <img id="screen" tabindex="0" alt="Chromium screencast">
@@ -203,6 +222,7 @@ const id = {{printf "%q" .ID}};
 const img = document.getElementById('screen');
 const statusEl = document.getElementById('status');
 const addressEl = document.getElementById('address');
+const tabsEl = document.getElementById('tabs');
 let viewportW = 0;
 let viewportH = 0;
 
@@ -226,6 +246,35 @@ async function refreshInfo() {
 function refreshFrame() {
   img.src = '/api/v1/browser/sessions/' + encodeURIComponent(id) + '/frame?t=' + Date.now();
 }
+async function refreshTabs() {
+  try {
+    const r = await fetch('/api/v1/browser/sessions/' + encodeURIComponent(id) + '/tabs', {cache:'no-store'});
+    const j = await r.json();
+    if (!r.ok) return;
+    const selected = tabsEl.value;
+    tabsEl.replaceChildren(...(j.items || []).map(tab => {
+      const option = document.createElement('option');
+      option.value = tab.id;
+      option.textContent = tab.title ? tab.title + ' — ' + tab.url : (tab.url || tab.id);
+      option.selected = !!tab.active;
+      return option;
+    }));
+    if (!(j.items || []).some(tab => tab.active) && selected) tabsEl.value = selected;
+  } catch (_) {}
+}
+tabsEl.addEventListener('change', async () => {
+  const targetID = tabsEl.value;
+  if (!targetID) return;
+  statusEl.textContent = 'переключение вкладки…';
+  const r = await fetch('/api/v1/browser/sessions/' + encodeURIComponent(id) + '/switch-tab', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({target_id:targetID})
+  });
+  const j = await r.json();
+  if (!r.ok) { alert(j.message || r.statusText); return; }
+  refreshInfo();
+  refreshFrame();
+  refreshTabs();
+});
 img.addEventListener('load', () => { statusEl.textContent = 'кадр получен'; });
 img.addEventListener('error', () => { /* frame may be not ready yet */ });
 
@@ -356,6 +405,8 @@ document.getElementById('close').addEventListener('click', async () => {
 refreshInfo(); refreshFrame();
 setInterval(refreshInfo, 3000);
 setInterval(refreshFrame, 450);
+refreshTabs();
+setInterval(refreshTabs, 2000);
 </script>
 </body>
 </html>`))
