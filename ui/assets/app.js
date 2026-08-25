@@ -419,6 +419,7 @@ async function loadSettings() {
   pageContent().innerHTML = renderSettings(state.settings)
   $("#settings-form").addEventListener("submit", saveSettings)
   $("#torrent-client-check").addEventListener("click", checkTorrentClientConnection)
+  $("#browser-extensions")?.addEventListener("click", openBrowserExtensions)
   $("#telegram-check")?.addEventListener("click", checkTelegramNotification)
   const browserMode = $("#set-browser-mode")
   if (browserMode) {
@@ -433,6 +434,26 @@ async function loadSettings() {
 	})
 	updateAuthSettingsVisibility()
 	updateNotificationSettingsVisibility()
+}
+
+async function openBrowserExtensions() {
+  const btn = $("#browser-extensions")
+  btn.disabled = true
+  btn.textContent = "Открываю…"
+  try {
+    const result = await api("/api/v1/browser/sessions", {
+      method: "POST",
+      body: JSON.stringify({tracker: "torrentmonitor-extensions", url: "chrome://extensions/"}),
+    })
+    if (!result.viewer_url) throw new Error("Chromium не вернул адрес окна")
+    window.open(result.viewer_url, "tm-browser-extensions", "noopener,noreferrer")
+    showToast("Открыта страница расширений сервисного Chromium", "success")
+  } catch (err) {
+    showToast(err.message, "error", 8000)
+  } finally {
+    btn.disabled = false
+    btn.textContent = "Расширения Chromium"
+  }
 }
 
 async function loadTemplates() {
@@ -526,6 +547,10 @@ function renderSettings(s) {
             <span>Адрес CDP внешнего Chromium</span>
             <input id="set-browser-connect-url" type="text" value="${escapeAttr(s.browser_connect_url || "")}" placeholder="http://127.0.0.1:9222 или ws://127.0.0.1:9222/devtools/browser/...">
           </label>
+        </div>
+        <div class="settings-actions settings-actions--test">
+          <button id="browser-extensions" class="btn" type="button">Расширения Chromium</button>
+          <span class="c-muted">Открывает общий профиль сервисного браузера. Установленные расширения будут доступны всем Chromium-проверкам.</span>
         </div>
         <div class="c-muted small-note">Для внешнего режима запусти Chromium самостоятельно с <code>--remote-debugging-port=9222</code>. TorrentMonitor будет только подключаться и создавать вкладки.</div>
       </div>

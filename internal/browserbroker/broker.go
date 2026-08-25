@@ -506,6 +506,18 @@ func (b *Broker) Input(ctx context.Context, id string, ev InputEvent) error {
 	return s.Input(ctx, ev)
 }
 
+func (b *Broker) Navigate(ctx context.Context, id string, rawURL string) error {
+	s := b.session(id)
+	if s == nil {
+		return ErrSessionNotFound
+	}
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return errors.New("browser navigation URL is required")
+	}
+	return s.Navigate(ctx, rawURL)
+}
+
 func (b *Broker) Done(ctx context.Context, id string) (SessionInfo, error) {
 	s := b.session(id)
 	if s == nil {
