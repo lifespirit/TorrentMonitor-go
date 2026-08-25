@@ -225,6 +225,39 @@ func TestQBittorrentKeepsConflictWhenExactTorrentIsMissing(t *testing.T) {
 	}
 }
 
+func TestQBittorrentHonorsExplicitSavePath(t *testing.T) {
+	torrentData := []byte("d4:infod4:name4:test6:lengthi1eee")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/torrents/add" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatal(err)
+		}
+		if got := r.FormValue("savepath"); got != "/downloads/topic" {
+			t.Fatalf("savepath = %q, want /downloads/topic", got)
+		}
+		if got := r.FormValue("autoTMM"); got != "false" {
+			t.Fatalf("autoTMM = %q, want false", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client, err := NewQBittorrent(Config{Kind: "qBittorrent", Address: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Add(context.Background(), AddRequest{
+		FileData: torrentData,
+		FileName: "test.torrent",
+		SavePath: "/downloads/topic",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestQBittorrentCheckConnectionDoesNotAddTorrent(t *testing.T) {
 	var addCalls atomic.Int32
 	var sawCookieOnVersion bool
