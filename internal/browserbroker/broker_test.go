@@ -1,9 +1,20 @@
 package browserbroker
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
+
+func TestOpenRequestDecodesSingleTab(t *testing.T) {
+	var req OpenRequest
+	if err := json.Unmarshal([]byte(`{"tracker":"extensions","url":"chrome://extensions/","single_tab":true}`), &req); err != nil {
+		t.Fatalf("decode OpenRequest: %v", err)
+	}
+	if !req.SingleTab {
+		t.Fatal("single_tab was not decoded")
+	}
+}
 
 type discardLogger struct{}
 

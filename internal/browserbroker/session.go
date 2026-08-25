@@ -40,6 +40,7 @@ type Session struct {
 	hasCloudflareClearance bool
 	looksLikeCloudflare    bool
 	looksLikeLoginPage     bool
+	singleTab              bool
 
 	cdp    *cdpConn
 	closed chan struct{}
@@ -67,6 +68,9 @@ func (s *Session) attach(ctx context.Context) error {
 		s.Close()
 		return err
 	}
+	if s.singleTab {
+		s.installSingleTab(ctx)
+	}
 	_, _ = cdp.Call(ctx, "Page.bringToFront", nil)
 	if s.cfg.ViewportW > 0 && s.cfg.ViewportH > 0 {
 		// Keep the page viewport, screencast metadata, and viewer coordinate
@@ -90,6 +94,42 @@ func (s *Session) attach(ctx context.Context) error {
 		s.logger.Info("browser session ready", "session", s.id, "tracker", s.tracker, "debugger_base", s.debuggerBase, "debugger_port", s.port)
 	}
 	return nil
+}
+
+const singleTabScript = `(() => {
+  if (window.__torrentMonitorSingleTab) return;
+  window.__torrentMonitorSingleTab = true;
+  window.open = function(url) {
+    if (url) location.href = String(url);
+    return window;
+  };
+  document.addEventListener('click', event => {
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    const link = path.find(node => node && typeof node.href === 'string');
+    if (!link || String(link.target || '').toLowerCase() !== '_blank') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    location.href = link.href;
+  }, true);
+})()`
+
+func (s *Session) enableSingleTab(ctx context.Context) {
+	s.mu.Lock()
+	if s.singleTab {
+		s.mu.Unlock()
+		return
+	}
+	s.singleTab = true
+	s.mu.Unlock()
+	s.installSingleTab(ctx)
+}
+
+func (s *Session) installSingleTab(ctx context.Context) {
+	if s.cdp == nil {
+		return
+	}
+	_, _ = s.cdp.Call(ctx, "Page.addScriptToEvaluateOnNewDocument", map[string]any{"source": singleTabScript})
+	_, _ = s.cdp.Call(ctx, "Runtime.evaluate", map[string]any{"expression": singleTabScript})
 }
 
 func waitDebugger(ctx context.Context, base string, timeout time.Duration) (string, error) {

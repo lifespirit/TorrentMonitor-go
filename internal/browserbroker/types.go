@@ -73,6 +73,7 @@ func (e *NeedsInteractionError) Error() string {
 type OpenRequest struct {
 	Tracker     string
 	URL         string
+	SingleTab   bool `json:"single_tab,omitempty"`
 	ProfilePath string // deprecated: BrowserBroker intentionally uses one shared profile for all trackers.
 }
 
