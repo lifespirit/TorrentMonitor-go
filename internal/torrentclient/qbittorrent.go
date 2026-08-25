@@ -317,7 +317,7 @@ func (q *QBittorrent) addURL(ctx context.Context, torrentURL, savePath string) e
 			return err
 		}
 	}
-	_ = mw.WriteField("autoTMM", "true")
+	_ = mw.WriteField("autoTMM", "false")
 	_ = mw.WriteField("root_folder", "true")
 	if err := mw.Close(); err != nil {
 		return err
@@ -355,7 +355,7 @@ func (q *QBittorrent) addFile(ctx context.Context, data []byte, filename, savePa
 			return err
 		}
 	}
-	_ = mw.WriteField("autoTMM", "true")
+	_ = mw.WriteField("autoTMM", "false")
 	_ = mw.WriteField("root_folder", "true")
 	if err := mw.Close(); err != nil {
 		return err
