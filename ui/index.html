@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TorrentMonitor Go</title>
+  <script src="/assets/theme.js"></script>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+<div id="login-view" class="login-view" hidden>
+  <form class="login-panel" id="login-form">
+    <div class="login-brand">
+      <div class="login-logo">TM</div>
+      <div><strong>TorrentMonitor</strong><span>Авторизация</span></div>
+    </div>
+    <label class="form-field">
+      <span>Пароль администратора</span>
+      <input id="login-password" type="password" autocomplete="current-password" autofocus>
+    </label>
+    <button class="btn btn--primary login-submit" type="submit">Войти</button>
+  </form>
+</div>
+
+<div id="app" class="tm-shell" hidden>
+  <header class="sidebar">
+    <div class="logo">
+      <div class="logo-mark">TM</div>
+      <div>
+        <div class="logo-title">TorrentMonitor</div>
+        <div class="logo-version" data-bind="version">loading…</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-item --active" type="button" data-page="torrents">Темы</button>
+      <button class="nav-item" type="button" data-page="warnings">Ошибки <span id="warnings-count" class="badge">0</span></button>
+      <button class="nav-item" type="button" data-page="credentials">Учётные данные</button>
+      <button class="nav-item" type="button" data-page="templates">Шаблоны</button>
+      <button class="nav-item" type="button" data-page="settings">Настройки</button>
+      <button class="nav-item" type="button" data-page="scheduler">Планировщик</button>
+      <button class="nav-item" type="button" id="logout" hidden>Выход</button>
+    </nav>
+  </header>
+
+  <main class="main">
+    <div class="top-bar" id="torrents-toolbar">
+      <div class="top-bar__search">
+        <input id="filter" type="text" placeholder="Фильтр тем">
+      </div>
+      <div class="top-bar__sort">
+        <button class="btn --active" type="button" id="sort-name">По имени</button>
+        <button class="btn" type="button" id="sort-date">По дате</button>
+      </div>
+      <button class="btn" type="button" id="add-theme">Добавить тему</button>
+      <button class="btn" type="button" id="add-series">Добавить сериал</button>
+      <button class="btn btn--primary" type="button" id="run-monitor">Обновить сейчас</button>
+    </div>
+
+    <section id="page-content" class="page" aria-live="polite"></section>
+  </main>
+</div>
+
+<div id="modal-backdrop" class="modal-backdrop" hidden>
+  <form id="item-form" class="modal-card">
+    <div class="modal-header">
+      <div>
+        <div id="modal-title" class="modal-title">Добавить</div>
+        <div id="modal-subtitle" class="modal-subtitle">Новый элемент мониторинга</div>
+      </div>
+      <button class="btn btn--icon" type="button" id="modal-close">×</button>
+    </div>
+
+    <input type="hidden" id="form-mode" value="theme">
+    <input type="hidden" id="form-id" value="">
+
+    <div id="theme-fields" class="form-grid">
+      <label class="form-field form-field--wide">
+        <span>Ссылка на тему</span>
+        <input id="theme-url" type="url" placeholder="https://rutracker.org/forum/viewtopic.php?t=123456">
+      </label>
+      <label class="form-field">
+        <span>Название</span>
+        <input id="theme-name" type="text" placeholder="можно оставить пустым">
+      </label>
+      <label class="form-field">
+        <span>Путь сохранения</span>
+        <input id="theme-path" type="text" placeholder="/downloads">
+      </label>
+      <label class="form-check form-field--wide">
+        <input id="theme-update-header" type="checkbox" checked>
+        <span>Обновлять заголовок из трекера</span>
+      </label>
+    </div>
+
+    <div id="series-fields" class="form-grid" hidden>
+      <label class="form-field">
+        <span>Трекер</span>
+        <select id="series-tracker">
+          <option value="lostfilm.tv">lostfilm.tv</option>
+          <option value="lostfilm-mirror">lostfilm-mirror</option>
+          <option value="newstudio.tv">newstudio.tv</option>
+          <option value="baibako.tv">baibako.tv</option>
+          <option value="hamsterstudio.org">hamsterstudio.org</option>
+        </select>
+      </label>
+      <label class="form-field">
+        <span>Качество</span>
+        <select id="series-hd">
+          <option value="0">sd</option>
+          <option value="1">720/1080 #1</option>
+          <option value="2">720/1080 #2</option>
+        </select>
+      </label>
+      <label class="form-field form-field--wide">
+        <span>Название сериала</span>
+        <input id="series-name" type="text" placeholder="Example Series">
+      </label>
+      <label class="form-field form-field--wide">
+        <span>Путь сохранения</span>
+        <input id="series-path" type="text" placeholder="/downloads/series">
+      </label>
+    </div>
+
+    <div id="edit-fields" class="form-grid" hidden>
+      <label class="form-field form-field--wide">
+        <span>Название</span>
+        <input id="edit-name" type="text">
+      </label>
+      <label class="form-field">
+        <span>ID темы</span>
+        <input id="edit-torrent-id" type="text">
+      </label>
+      <label class="form-field">
+        <span>Путь сохранения</span>
+        <input id="edit-path" type="text">
+      </label>
+      <label class="form-check">
+        <input id="edit-auto-update" type="checkbox">
+        <span>Обновлять заголовок</span>
+      </label>
+      <label class="form-check">
+        <input id="edit-paused" type="checkbox">
+        <span>Пауза</span>
+      </label>
+      <label class="form-check form-field--wide">
+        <input id="edit-reset" type="checkbox">
+        <span>Сбросить дату/эпизод/hash</span>
+      </label>
+    </div>
+
+    <div id="form-error" class="form-error" hidden></div>
+
+    <div class="modal-actions">
+      <button class="btn" type="button" id="modal-cancel">Отмена</button>
+      <button class="btn btn--primary" type="submit" id="modal-submit">Сохранить</button>
+    </div>
+  </form>
+</div>
+
+<div id="loader" class="loader">Загрузка…</div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

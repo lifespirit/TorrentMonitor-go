@@ -1,0 +1,96 @@
+schema_version: 1
+id: nnmclub.to
+name: NNM-Club
+kind: forum_topic
+mode: http
+
+domains:
+  - nnmclub.to
+  - nnm-club.name
+  - nnm-club.me
+  - nnm-club.ws
+
+defaults:
+  access_mode: chromium
+  timezone: Europe/Moscow
+  page_timeout_seconds: 30
+
+encoding:
+  page: utf-8
+  target: utf-8
+  form: utf-8
+
+urls:
+  base: https://nnmclub.to
+  login: https://nnmclub.to/forum/login.php
+  auth_check: https://nnmclub.to/forum/index.php
+  topic: https://nnmclub.to/forum/viewtopic.php?t={{ item.torrent_id }}
+
+http:
+  user_agent_setting: userAgent
+  proxy: inherit
+
+auth:
+  type: form
+  check:
+    method: GET
+    url: https://nnmclub.to/forum/index.php
+    success:
+      contains_any:
+        - profile.php?mode=viewprofile
+        - profile.php?mode=editprofile
+        - login.php?logout=true
+        - /forum/login.php?logout=true
+  login_form:
+    method: POST
+    url: https://nnmclub.to/forum/login.php
+    headers:
+      Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+      Accept-Language: ru-RU,ru;q=0.9,en;q=0.7
+      Origin: https://nnmclub.to
+      Referer: https://nnmclub.to/forum/login.php
+    form:
+      username: "{{ credentials.login }}"
+      password: "{{ credentials.password }}"
+      autologin: "on"
+      login: Вход
+
+topic:
+  ready:
+    url:
+      exact: https://nnmclub.to/forum/viewtopic.php?t={{ item.torrent_id }}
+    dom_contains:
+      - download.php?id=
+
+  title:
+    selector: title
+    cleanup:
+      - trim_suffix: " :: NNM-Club"
+
+  updated_at:
+    selector: body
+    regex: "(?is)Зарегистрирован:\\s*(?:&nbsp;|\\s|<[^>]*>)*([0-9]{1,2}\\s+[А-Яа-я]{3}\\s+[0-9]{4}\\s+[0-9]{2}:[0-9]{2}:[0-9]{2})"
+    layout: "2 Jan 2006 15:04:05"
+    locale: ru
+    timezone: Europe/Moscow
+
+  closed:
+    contains_any:
+      - Тема закрыта
+      - Раздача закрыта
+      - Торрент удалён
+      - Торрент удален
+
+download:
+  url_from_page:
+    selector: body
+    regex: "href=[\"']((?:https?://[^\"']+)?(?:/forum/)?download\\.php\\?id=[0-9][^\"']*)[\"']"
+  before:
+    headers:
+      Referer: https://nnmclub.to/forum/viewtopic.php?t={{ item.torrent_id }}
+  validate:
+    bencode_torrent: true
+    max_size_mb: 5
+    reject_if_starts_with:
+      - "<!DOCTYPE html"
+      - "<html"

@@ -1,0 +1,3 @@
+[submodule "site-templates"]
+	path = site-templates
+	url = git@github.com:lifespirit/TorrentMonitor-templates.git

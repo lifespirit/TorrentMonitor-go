@@ -1,0 +1,91 @@
+schema_version: 1
+id: rutracker.org
+name: RuTracker
+kind: forum_topic
+mode: http
+
+domains:
+  - rutracker.org
+
+defaults:
+  access_mode: chromium
+  timezone: Europe/Moscow
+  page_timeout_seconds: 30
+
+encoding:
+  page: windows-1251
+  target: utf-8
+  form: windows-1251
+
+urls:
+  base: https://rutracker.org
+  login: https://rutracker.org/forum/login.php
+  auth_check: https://rutracker.org/forum/index.php
+  topic: https://rutracker.org/forum/viewtopic.php?t={{ item.torrent_id }}
+  download: https://rutracker.org/forum/dl.php?t={{ item.torrent_id }}
+
+http:
+  user_agent_setting: userAgent
+  proxy: inherit
+
+auth:
+  type: form
+  check:
+    method: GET
+    url: https://rutracker.org/forum/index.php
+    success:
+      contains: profile.php?mode=viewprofile
+  login_form:
+    method: POST
+    url: https://rutracker.org/forum/login.php
+    form_encoding: windows-1251
+    headers:
+      Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+      Accept-Language: ru-RU,ru;q=0.9,en;q=0.7
+      Origin: https://rutracker.org
+      Referer: https://rutracker.org/forum/login.php
+    form:
+      login_username: "{{ credentials.login }}"
+      login_password: "{{ credentials.password }}"
+      login: Вход
+
+topic:
+  ready:
+    url:
+      exact: https://rutracker.org/forum/viewtopic.php?t={{ item.torrent_id }}
+    dom_contains:
+      - dl.php?t={{ item.torrent_id }}
+
+  title:
+    selector: title
+    cleanup:
+      - trim_suffix: " :: RuTracker.org"
+
+  updated_at:
+    selector: body
+    regex: "([0-9]{2}-[А-Яа-я]{3}-[0-9]{2} [0-9]{2}:[0-9]{2})"
+    layout: "02-Jan-06 15:04"
+    locale: ru
+    timezone: Europe/Moscow
+
+  closed:
+    contains_any:
+      - Тема закрыта
+      - раздача закрыта
+
+download:
+  url: https://rutracker.org/forum/dl.php?t={{ item.torrent_id }}
+  before:
+    headers:
+      Referer: https://rutracker.org/forum/viewtopic.php?t={{ item.torrent_id }}
+    set_cookie:
+      - name: bb_dl
+        value: "{{ item.torrent_id }}"
+        domain: rutracker.org
+        path: /forum/
+  validate:
+    bencode_torrent: true
+    max_size_mb: 5
+    reject_if_starts_with:
+      - "<!DOCTYPE html"
+      - "<html"
