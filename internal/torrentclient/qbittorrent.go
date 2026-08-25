@@ -3,6 +3,7 @@ package torrentclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -148,6 +149,7 @@ func (q *QBittorrent) Add(ctx context.Context, req AddRequest) (AddResult, error
 		}
 	}
 
+	expectedHash, _ := torrentInfoHash(req.FileData)
 	if err := q.addTorrent(ctx, req); err != nil {
 		if isAuthError(err) {
 			q.clearSession()
@@ -157,8 +159,21 @@ func (q *QBittorrent) Add(ctx context.Context, req AddRequest) (AddResult, error
 			err = q.addTorrent(ctx, req)
 		}
 		if err != nil {
-			return AddResult{}, err
+			if !isConflictError(err) || expectedHash == "" {
+				return AddResult{}, err
+			}
+			exists, lookupErr := q.hasTorrent(ctx, expectedHash)
+			if lookupErr != nil {
+				return AddResult{}, lookupErr
+			}
+			if !exists {
+				return AddResult{}, err
+			}
+			return AddResult{Hash: expectedHash}, nil
 		}
+	}
+	if expectedHash != "" {
+		return AddResult{Hash: expectedHash}, nil
 	}
 
 	hash, err := q.latestHash(ctx)
@@ -175,6 +190,31 @@ func (q *QBittorrent) Add(ctx context.Context, req AddRequest) (AddResult, error
 		}
 	}
 	return AddResult{Hash: hash}, nil
+}
+
+func (q *QBittorrent) hasTorrent(ctx context.Context, hash string) (bool, error) {
+	form := url.Values{}
+	form.Set("hashes", hash)
+	resp, err := q.postForm(ctx, "/api/v2/torrents/info", form)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, statusError(resp, "info")
+	}
+	var items []struct {
+		Hash string `json:"hash"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		return false, err
+	}
+	for _, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item.Hash), hash) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (q *QBittorrent) Remove(ctx context.Context, hash string, deleteFiles bool) error {
@@ -494,6 +534,91 @@ func isSessionCookieName(name string) bool {
 func isAuthError(err error) bool {
 	var se *httpStatusError
 	return errors.As(err, &se) && (se.status == http.StatusForbidden || se.status == http.StatusUnauthorized)
+}
+
+func isConflictError(err error) bool {
+	var se *httpStatusError
+	return errors.As(err, &se) && se.status == http.StatusConflict
+}
+
+func torrentInfoHash(data []byte) (string, error) {
+	if len(data) == 0 || data[0] != 'd' {
+		return "", errors.New("torrent metadata is not a bencoded dictionary")
+	}
+	for pos := 1; pos < len(data) && data[pos] != 'e'; {
+		keyStart, keyEnd, next, err := bencodeString(data, pos)
+		if err != nil {
+			return "", err
+		}
+		valueStart := next
+		valueEnd, err := skipBencodeValue(data, valueStart)
+		if err != nil {
+			return "", err
+		}
+		if string(data[keyStart:keyEnd]) == "info" {
+			sum := sha1.Sum(data[valueStart:valueEnd])
+			return fmt.Sprintf("%x", sum), nil
+		}
+		pos = valueEnd
+	}
+	return "", errors.New("torrent metadata does not contain info dictionary")
+}
+
+func skipBencodeValue(data []byte, pos int) (int, error) {
+	if pos >= len(data) {
+		return 0, errors.New("unexpected end of bencoded data")
+	}
+	switch data[pos] {
+	case 'i':
+		end := bytes.IndexByte(data[pos+1:], 'e')
+		if end < 0 {
+			return 0, errors.New("unterminated bencoded integer")
+		}
+		return pos + end + 2, nil
+	case 'l', 'd':
+		pos++
+		for pos < len(data) && data[pos] != 'e' {
+			var err error
+			pos, err = skipBencodeValue(data, pos)
+			if err != nil {
+				return 0, err
+			}
+		}
+		if pos >= len(data) {
+			return 0, errors.New("unterminated bencoded collection")
+		}
+		return pos + 1, nil
+	default:
+		_, _, next, err := bencodeString(data, pos)
+		return next, err
+	}
+}
+
+func bencodeString(data []byte, pos int) (start, end, next int, err error) {
+	if pos >= len(data) || data[pos] < '0' || data[pos] > '9' {
+		return 0, 0, 0, errors.New("invalid bencoded string")
+	}
+	length := 0
+	for pos < len(data) && data[pos] != ':' {
+		if data[pos] < '0' || data[pos] > '9' {
+			return 0, 0, 0, errors.New("invalid bencoded string length")
+		}
+		digit := int(data[pos] - '0')
+		if length > (len(data)-digit)/10 {
+			return 0, 0, 0, errors.New("bencoded string exceeds input")
+		}
+		length = length*10 + digit
+		pos++
+	}
+	if pos >= len(data) {
+		return 0, 0, 0, errors.New("unterminated bencoded string length")
+	}
+	start = pos + 1
+	end = start + length
+	if end > len(data) {
+		return 0, 0, 0, errors.New("bencoded string exceeds input")
+	}
+	return start, end, end, nil
 }
 
 func statusError(resp *http.Response, op string) error {
