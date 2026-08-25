@@ -25,7 +25,6 @@ urls:
   download: https://rutracker.org/forum/dl.php?t={{ item.torrent_id }}
 
 http:
-  user_agent_setting: userAgent
   proxy: inherit
 
 auth:

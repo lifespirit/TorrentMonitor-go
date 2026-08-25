@@ -86,7 +86,6 @@ func (s *Server) legacyAction(w http.ResponseWriter, r *http.Request) {
 			DeleteDistribution: boolPtr(parseLegacyBool(r.FormValue("deleteDistribution"))),
 			ServerAddress:      stringPtr(r.FormValue("serverAddress")),
 			Debug:              boolPtr(parseLegacyBool(r.FormValue("debug"))),
-			RSS:                boolPtr(parseLegacyBool(r.FormValue("rss"))),
 			AutoUpdate:         boolPtr(parseLegacyBool(r.FormValue("autoUpdate"))),
 			HTTPTimeoutSeconds: intPtr(timeout),
 			UserAgent:          stringPtr(r.FormValue("userAgent")),

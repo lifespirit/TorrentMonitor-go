@@ -8,7 +8,7 @@ domains:
   - tapochek.net
 
 defaults:
-  access_mode: chromium
+  access_mode: native
   timezone: Europe/Moscow
   page_timeout_seconds: 30
 
@@ -25,7 +25,6 @@ urls:
   download: https://tapochek.net/dl.php?t={{ item.torrent_id }}
 
 http:
-  user_agent_setting: userAgent
   proxy: inherit
 
 auth:

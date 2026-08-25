@@ -246,7 +246,6 @@ type Settings struct {
 	DeleteDistribution            bool       `json:"delete_distribution"`
 	ServerAddress                 string     `json:"server_address"`
 	Debug                         bool       `json:"debug"`
-	RSS                           bool       `json:"rss"`
 	AutoUpdate                    bool       `json:"auto_update"`
 	HTTPTimeoutSeconds            int        `json:"http_timeout_seconds"`
 	MonitorIntervalMinutes        int        `json:"monitor_interval_minutes"`
@@ -287,7 +286,6 @@ type UpdateSettingsRequest struct {
 	DeleteDistribution            *bool   `json:"delete_distribution"`
 	ServerAddress                 *string `json:"server_address"`
 	Debug                         *bool   `json:"debug"`
-	RSS                           *bool   `json:"rss"`
 	AutoUpdate                    *bool   `json:"auto_update"`
 	HTTPTimeoutSeconds            *int    `json:"http_timeout_seconds"`
 	MonitorIntervalMinutes        *int    `json:"monitor_interval_minutes"`
@@ -416,7 +414,6 @@ func DefaultSettings() Settings {
 		DeleteDistribution:            false,
 		ServerAddress:                 "",
 		Debug:                         false,
-		RSS:                           true,
 		AutoUpdate:                    false,
 		HTTPTimeoutSeconds:            15,
 		MonitorIntervalMinutes:        15,
@@ -524,9 +521,6 @@ func ApplySettingsPatch(s Settings, patch UpdateSettingsRequest) Settings {
 	}
 	if patch.Debug != nil {
 		s.Debug = *patch.Debug
-	}
-	if patch.RSS != nil {
-		s.RSS = *patch.RSS
 	}
 	if patch.AutoUpdate != nil {
 		s.AutoUpdate = *patch.AutoUpdate
