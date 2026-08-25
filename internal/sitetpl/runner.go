@@ -26,6 +26,7 @@ func DefaultRegistry() *Registry {
 	r := &Registry{templates: map[string]Template{}}
 	r.Register(DefaultRutrackerTemplate())
 	r.Register(DefaultNNMClubTemplate())
+	r.Register(DefaultTapochekTemplate())
 	return r
 }
 

@@ -181,6 +181,9 @@ func TestListCredentialsFollowsTemplateRegistry(t *testing.T) {
 	if _, ok := got["nnmclub.to"]; !ok {
 		t.Fatalf("nnmclub.to credential missing: %+v", creds)
 	}
+	if _, ok := got["tapochek.net"]; !ok {
+		t.Fatalf("tapochek.net credential missing: %+v", creds)
+	}
 	if _, ok := got["lostfilm.tv"]; ok {
 		t.Fatalf("lostfilm.tv should be hidden because there is no loaded template: %+v", creds)
 	}
