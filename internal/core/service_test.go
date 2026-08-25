@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -69,16 +70,21 @@ func TestPostUpdateEnvMarksTorrentClientOptional(t *testing.T) {
 }
 
 type credentialRepo struct {
-	creds []Credential
+	creds       []Credential
+	torrents    []TorrentItem
+	createCalls int
 }
 
 func (r *credentialRepo) ListTorrents(ctx context.Context, sortBy, dir, filter string) ([]TorrentItem, error) {
-	return nil, nil
+	return append([]TorrentItem(nil), r.torrents...), nil
 }
 func (r *credentialRepo) GetTorrent(ctx context.Context, id int64) (TorrentItem, error) {
 	return TorrentItem{}, ErrNotFound
 }
 func (r *credentialRepo) CreateTorrent(ctx context.Context, item TorrentItem) (TorrentItem, error) {
+	r.createCalls++
+	item.ID = int64(len(r.torrents) + 1)
+	r.torrents = append(r.torrents, item)
 	return item, nil
 }
 func (r *credentialRepo) UpdateTorrent(ctx context.Context, id int64, patch UpdateTorrentRequest) (TorrentItem, error) {
@@ -134,6 +140,27 @@ func (r *credentialRepo) SaveTorrentClientSession(ctx context.Context, cookie st
 }
 func (r *credentialRepo) Bootstrap(ctx context.Context, authenticated bool) (Bootstrap, error) {
 	return Bootstrap{}, nil
+}
+
+func TestAddTorrentRejectsExistingForumTopic(t *testing.T) {
+	repo := &credentialRepo{}
+	svc := NewService(repo, nil)
+	req := AddTorrentRequest{Kind: TorrentKindTheme, URL: "https://rutracker.org/forum/viewtopic.php?t=123456"}
+
+	first, err := svc.AddTorrent(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first AddTorrent: %v", err)
+	}
+	second, err := svc.AddTorrent(context.Background(), req)
+	if !errors.Is(err, ErrTorrentExists) {
+		t.Fatalf("second AddTorrent error = %v, want ErrTorrentExists", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("duplicate returned id %d, want existing id %d", second.ID, first.ID)
+	}
+	if repo.createCalls != 1 {
+		t.Fatalf("CreateTorrent called %d times, want 1", repo.createCalls)
+	}
 }
 
 func TestListCredentialsFollowsTemplateRegistry(t *testing.T) {

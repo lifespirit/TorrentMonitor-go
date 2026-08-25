@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"torrentmonitor-go/internal/browserbroker"
@@ -20,7 +21,10 @@ import (
 	"torrentmonitor-go/internal/torrentclient"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound      = errors.New("not found")
+	ErrTorrentExists = errors.New("тема уже существует")
+)
 
 type Repository interface {
 	ListTorrents(ctx context.Context, sortBy, dir, filter string) ([]TorrentItem, error)
@@ -49,6 +53,7 @@ type Service struct {
 	logger  *slog.Logger
 	runner  *sitetpl.Runner
 	browser *browserbroker.Broker
+	addMu   sync.Mutex
 }
 
 func NewService(repo Repository, logger *slog.Logger) *Service {
@@ -93,6 +98,9 @@ func (s *Service) GetTorrent(ctx context.Context, id int64) (TorrentItem, error)
 }
 
 func (s *Service) AddTorrent(ctx context.Context, req AddTorrentRequest) (TorrentItem, error) {
+	s.addMu.Lock()
+	defer s.addMu.Unlock()
+
 	if req.Kind == "" {
 		req.Kind = TorrentKindTheme
 	}
@@ -127,6 +135,17 @@ func (s *Service) AddTorrent(ctx context.Context, req AddTorrentRequest) (Torren
 		item.Quality = qualityFor(item.Tracker, req.HD)
 	default:
 		return TorrentItem{}, fmt.Errorf("unsupported torrent kind: %s", req.Kind)
+	}
+	if item.Type == TrackerTypeForum {
+		items, err := s.repo.ListTorrents(ctx, "name", "asc", "")
+		if err != nil {
+			return TorrentItem{}, err
+		}
+		for _, existing := range items {
+			if existing.Type == TrackerTypeForum && strings.EqualFold(existing.Tracker, item.Tracker) && existing.TorrentID == item.TorrentID {
+				return existing, ErrTorrentExists
+			}
+		}
 	}
 
 	created, err := s.repo.CreateTorrent(ctx, item)
@@ -607,6 +626,17 @@ func (s *Service) RunMonitorOnce(ctx context.Context) error {
 		}
 	}
 	s.logger.Info("monitor cycle finished", "items", len(items))
+	return nil
+}
+
+func (s *Service) RunTorrentOnce(ctx context.Context, id int64) error {
+	result, err := s.CheckTorrent(ctx, id)
+	if err != nil {
+		return err
+	}
+	if result.Updated {
+		s.logger.Info("torrent update detected", "id", id, "title", result.Title, "torrent_bytes", result.TorrentSize)
+	}
 	return nil
 }
 

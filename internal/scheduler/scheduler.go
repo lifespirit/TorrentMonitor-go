@@ -10,6 +10,7 @@ import (
 
 type Core interface {
 	RunMonitorOnce(ctx context.Context) error
+	RunTorrentOnce(ctx context.Context, id int64) error
 	RunTemplateUpdate(ctx context.Context) error
 }
 
@@ -19,12 +20,14 @@ type Config struct {
 }
 
 type Scheduler struct {
-	cfg     Config
-	core    Core
-	logger  *slog.Logger
-	jobs    map[string]*Job
-	mu      sync.RWMutex
-	changed chan struct{}
+	cfg           Config
+	core          Core
+	logger        *slog.Logger
+	jobs          map[string]*Job
+	mu            sync.RWMutex
+	monitorMu     sync.Mutex
+	changed       chan struct{}
+	torrentChecks chan int64
 }
 
 type Job struct {
@@ -47,10 +50,11 @@ func New(cfg Config, core Core, logger *slog.Logger) *Scheduler {
 		cfg.MonitorInterval = 15 * time.Minute
 	}
 	return &Scheduler{
-		cfg:     cfg,
-		core:    core,
-		logger:  logger,
-		changed: make(chan struct{}, 1),
+		cfg:           cfg,
+		core:          core,
+		logger:        logger,
+		changed:       make(chan struct{}, 1),
+		torrentChecks: make(chan int64, 256),
 		jobs: map[string]*Job{
 			"monitor":   {Name: "monitor"},
 			"templates": {Name: "templates"},
@@ -59,18 +63,48 @@ func New(cfg Config, core Core, logger *slog.Logger) *Scheduler {
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
-	go s.loop(ctx, "monitor", s.core.RunMonitorOnce, s.monitorInterval)
+	go s.loop(ctx, "monitor", s.runMonitorOnce, s.monitorInterval)
 	go s.loop(ctx, "templates", s.core.RunTemplateUpdate, s.templateInterval)
+	go s.torrentCheckLoop(ctx)
 }
 
 func (s *Scheduler) RunNow(ctx context.Context, name string) error {
 	switch name {
 	case "monitor":
-		return s.run(ctx, name, s.core.RunMonitorOnce, false)
+		return s.run(ctx, name, s.runMonitorOnce, false)
 	case "templates", "template_update":
 		return s.run(ctx, "templates", s.core.RunTemplateUpdate, false)
 	default:
 		return nil
+	}
+}
+
+func (s *Scheduler) QueueTorrentCheck(id int64) {
+	if id <= 0 {
+		return
+	}
+	s.torrentChecks <- id
+}
+
+func (s *Scheduler) runMonitorOnce(ctx context.Context) error {
+	s.monitorMu.Lock()
+	defer s.monitorMu.Unlock()
+	return s.core.RunMonitorOnce(ctx)
+}
+
+func (s *Scheduler) torrentCheckLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case id := <-s.torrentChecks:
+			s.monitorMu.Lock()
+			err := s.core.RunTorrentOnce(ctx, id)
+			s.monitorMu.Unlock()
+			if err != nil {
+				s.logger.Error("queued torrent check failed", "id", id, "error", err)
+			}
+		}
 	}
 }
 

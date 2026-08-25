@@ -37,6 +37,7 @@ func (s *Server) legacyAction(w http.ResponseWriter, r *http.Request) {
 			writeLegacy(w, true, err.Error())
 			return
 		}
+		s.scheduler.QueueTorrentCheck(item.ID)
 		writeLegacy(w, false, "Тема добавлена для мониторинга: "+item.Name)
 	case "serial_add":
 		hd, _ := strconv.Atoi(r.FormValue("hd"))
@@ -51,6 +52,7 @@ func (s *Server) legacyAction(w http.ResponseWriter, r *http.Request) {
 			writeLegacy(w, true, err.Error())
 			return
 		}
+		s.scheduler.QueueTorrentCheck(item.ID)
 		writeLegacy(w, false, "Сериал добавлен для мониторинга: "+item.Name)
 	case "update_credentials":
 		id, _ := strconv.ParseInt(r.FormValue("id"), 10, 64)

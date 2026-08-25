@@ -142,9 +142,14 @@ func (s *Server) apiCreateTorrent(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.core.AddTorrent(r.Context(), req)
 	if err != nil {
+		if errors.Is(err, core.ErrTorrentExists) {
+			writeError(w, http.StatusConflict, "Тема уже существует.")
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.scheduler.QueueTorrentCheck(item.ID)
 	writeJSONStatus(w, http.StatusCreated, item)
 }
 
