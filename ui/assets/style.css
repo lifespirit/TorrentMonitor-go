@@ -30,6 +30,8 @@ input { width: 100%; border: 1px solid var(--c-border); border-radius: 12px; bac
 .btn:hover, .btn.--active { border-color: var(--c-primary); }
 .btn--primary { background: var(--c-primary); color: #061222; border-color: var(--c-primary); font-weight: 700; }
 .page { display: grid; gap: 10px; }
+.pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px 0 2px; }
+.pagination__status { color: var(--c-muted); font-size: 13px; }
 .tm-item { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto auto auto; gap: 14px; align-items: center; padding: 14px; border: 1px solid var(--c-border); background: var(--c-panel); border-radius: 16px; }
 .tm-item > div:nth-child(2) { min-width: 0; }
 .tracker-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--c-panel-soft); color: var(--c-muted); font-size: 11px; font-weight: 800; text-transform: uppercase; }
