@@ -152,6 +152,9 @@ func (b *Broker) Open(ctx context.Context, req OpenRequest) (OpenResult, error) 
 	if id := b.byTracker[tracker]; id != "" {
 		if s := b.sessions[id]; s != nil && !s.isClosed() {
 			b.mu.Unlock()
+			if req.SingleTab {
+				s.enableSingleTab(ctx)
+			}
 			info := s.Status()
 			if info.Status == "needs_interaction" {
 				return OpenResult{ID: info.ID, Tracker: info.Tracker, URL: info.URL, ProfilePath: info.ProfilePath, ViewerURL: "/browser/session/" + info.ID, Status: info.Status, CreatedAt: info.CreatedAt}, nil
@@ -173,7 +176,7 @@ func (b *Broker) Open(ctx context.Context, req OpenRequest) (OpenResult, error) 
 	created := time.Now()
 	s := &Session{
 		id: id, tracker: tracker, url: rawURL, profilePath: b.browser.profilePath, port: b.browser.port, debuggerBase: b.browser.debuggerBase,
-		targetID: targetID, wsURL: wsURL, cfg: b.cfg, logger: b.logger,
+		targetID: targetID, wsURL: wsURL, cfg: b.cfg, logger: b.logger, singleTab: req.SingleTab,
 		createdAt: created, updatedAt: created, status: "starting", closed: make(chan struct{}), ready: make(chan struct{}),
 	}
 	b.sessions[id] = s
