@@ -159,6 +159,72 @@ func TestQBittorrentLoginRejects200FailsWithoutCookie(t *testing.T) {
 	}
 }
 
+func TestQBittorrentTreatsExactDuplicateAsSuccessfulAdd(t *testing.T) {
+	const expectedHash = "13fdbc500353cc14e9c170e2f755993eeaa9fb8d"
+	torrentData := []byte("d4:infod4:name4:test6:lengthi1eee")
+	var infoCalls atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/torrents/add":
+			http.Error(w, "Conflict", http.StatusConflict)
+		case "/api/v2/torrents/info":
+			infoCalls.Add(1)
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if r.Form.Get("hashes") != expectedHash {
+				t.Fatalf("unexpected hash lookup %q", r.Form.Get("hashes"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"hash":"` + expectedHash + `"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client, err := NewQBittorrent(Config{Kind: "qBittorrent", Address: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.Add(context.Background(), AddRequest{FileData: torrentData, FileName: "test.torrent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Hash != expectedHash {
+		t.Fatalf("unexpected hash %q", result.Hash)
+	}
+	if infoCalls.Load() != 1 {
+		t.Fatalf("expected one exact hash lookup, got %d", infoCalls.Load())
+	}
+}
+
+func TestQBittorrentKeepsConflictWhenExactTorrentIsMissing(t *testing.T) {
+	torrentData := []byte("d4:infod4:name4:test6:lengthi1eee")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/torrents/add":
+			http.Error(w, "Conflict", http.StatusConflict)
+		case "/api/v2/torrents/info":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client, err := NewQBittorrent(Config{Kind: "qBittorrent", Address: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Add(context.Background(), AddRequest{FileData: torrentData, FileName: "test.torrent"})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 409") {
+		t.Fatalf("expected original conflict, got %v", err)
+	}
+}
+
 func TestQBittorrentCheckConnectionDoesNotAddTorrent(t *testing.T) {
 	var addCalls atomic.Int32
 	var sawCookieOnVersion bool
