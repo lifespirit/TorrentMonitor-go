@@ -152,9 +152,6 @@ func (b *Broker) Open(ctx context.Context, req OpenRequest) (OpenResult, error) 
 	if id := b.byTracker[tracker]; id != "" {
 		if s := b.sessions[id]; s != nil && !s.isClosed() {
 			b.mu.Unlock()
-			if req.SingleTab {
-				s.enableSingleTab(ctx)
-			}
 			info := s.Status()
 			if info.Status == "needs_interaction" {
 				return OpenResult{ID: info.ID, Tracker: info.Tracker, URL: info.URL, ProfilePath: info.ProfilePath, ViewerURL: "/browser/session/" + info.ID, Status: info.Status, CreatedAt: info.CreatedAt}, nil
@@ -176,7 +173,7 @@ func (b *Broker) Open(ctx context.Context, req OpenRequest) (OpenResult, error) 
 	created := time.Now()
 	s := &Session{
 		id: id, tracker: tracker, url: rawURL, profilePath: b.browser.profilePath, port: b.browser.port, debuggerBase: b.browser.debuggerBase,
-		targetID: targetID, wsURL: wsURL, cfg: b.cfg, logger: b.logger, singleTab: req.SingleTab,
+		targetID: targetID, wsURL: wsURL, cfg: b.cfg, logger: b.logger,
 		createdAt: created, updatedAt: created, status: "starting", closed: make(chan struct{}), ready: make(chan struct{}),
 	}
 	b.sessions[id] = s
@@ -318,6 +315,51 @@ func createBrowserTarget(ctx context.Context, base string, rawURL string) (strin
 		return "", "", errors.New("created Chromium tab without websocket debugger URL")
 	}
 	return wsURL, target.ID, nil
+}
+
+type browserTarget struct {
+	ID                   string `json:"id"`
+	Type                 string `json:"type"`
+	URL                  string `json:"url"`
+	Title                string `json:"title"`
+	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+}
+
+func listBrowserTargets(ctx context.Context, base string) ([]browserTarget, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/json/list", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list Chromium tabs: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list Chromium tabs returned HTTP %d", resp.StatusCode)
+	}
+	var targets []browserTarget
+	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
+		return nil, fmt.Errorf("decode Chromium tabs: %w", err)
+	}
+	return targets, nil
+}
+
+func closeBrowserTarget(ctx context.Context, base string, targetID string) error {
+	endpoint := strings.TrimRight(base, "/") + "/json/close/" + neturl.PathEscape(targetID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("close Chromium tab: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("close Chromium tab returned HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // FetchPage opens rawURL in the shared Chromium profile and returns the live DOM.
@@ -519,6 +561,126 @@ func (b *Broker) Navigate(ctx context.Context, id string, rawURL string) error {
 		return errors.New("browser navigation URL is required")
 	}
 	return s.Navigate(ctx, rawURL)
+}
+
+func (b *Broker) Tabs(ctx context.Context, id string) ([]BrowserTab, error) {
+	s := b.session(id)
+	if s == nil {
+		return nil, ErrSessionNotFound
+	}
+	targets, err := listBrowserTargets(ctx, s.debuggerBase)
+	if err != nil {
+		return nil, err
+	}
+	tabs := make([]BrowserTab, 0, len(targets))
+	for _, target := range targets {
+		if target.Type != "page" || target.WebSocketDebuggerURL == "" {
+			continue
+		}
+		tabs = append(tabs, BrowserTab{ID: target.ID, URL: target.URL, Title: target.Title, Active: target.ID == s.targetID})
+	}
+	return tabs, nil
+}
+
+func (b *Broker) SwitchTab(ctx context.Context, id string, targetID string) error {
+	old := b.session(id)
+	if old == nil {
+		return ErrSessionNotFound
+	}
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		return errors.New("browser target id is required")
+	}
+	targets, err := listBrowserTargets(ctx, old.debuggerBase)
+	if err != nil {
+		return err
+	}
+	var candidate *browserTarget
+	for i := range targets {
+		target := &targets[i]
+		if target.Type == "page" && target.ID == targetID && target.WebSocketDebuggerURL != "" {
+			candidate = target
+			break
+		}
+	}
+	if candidate == nil {
+		return errors.New("browser tab not found")
+	}
+	if candidate.ID == old.targetID {
+		return nil
+	}
+
+	created := old.createdAt
+	next := &Session{
+		id: id, tracker: old.tracker, url: candidate.URL, profilePath: old.profilePath, port: old.port, debuggerBase: old.debuggerBase,
+		targetID: candidate.ID, wsURL: candidate.WebSocketDebuggerURL, cfg: old.cfg, logger: old.logger,
+		createdAt: created, updatedAt: time.Now(), status: "starting", closed: make(chan struct{}), ready: make(chan struct{}),
+	}
+	if err := next.attach(ctx); err != nil {
+		return err
+	}
+
+	b.mu.Lock()
+	if b.sessions[id] != old {
+		b.mu.Unlock()
+		next.Detach()
+		return nil
+	}
+	b.sessions[id] = next
+	b.mu.Unlock()
+	old.Detach()
+	b.logger.Info("browser viewer switched tab", "session", id, "tracker", next.tracker, "url", candidate.URL, "target", candidate.ID)
+	return nil
+}
+
+// CloseTab closes a selected Chromium page. When it is the viewer's active
+// target, the viewer is moved to another page first so its window can remain
+// usable. The returned value reports that no replacement page was available.
+func (b *Broker) CloseTab(ctx context.Context, id string, targetID string) (bool, error) {
+	current := b.session(id)
+	if current == nil {
+		return false, ErrSessionNotFound
+	}
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		targetID = current.targetID
+	}
+	if targetID != current.targetID {
+		return false, closeBrowserTarget(ctx, current.debuggerBase, targetID)
+	}
+
+	targets, err := listBrowserTargets(ctx, current.debuggerBase)
+	if err != nil {
+		return false, err
+	}
+	var replacement string
+	for _, target := range targets {
+		if target.Type == "page" && target.ID != targetID && target.WebSocketDebuggerURL != "" && target.URL != "about:blank" {
+			replacement = target.ID
+			break
+		}
+	}
+	if replacement == "" {
+		for _, target := range targets {
+			if target.Type == "page" && target.ID != targetID && target.WebSocketDebuggerURL != "" {
+				replacement = target.ID
+				break
+			}
+		}
+	}
+	if replacement == "" {
+		if err := b.Close(id); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err := b.SwitchTab(ctx, id, replacement); err != nil {
+		return false, err
+	}
+	if err := closeBrowserTarget(ctx, current.debuggerBase, targetID); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 func (b *Broker) Done(ctx context.Context, id string) (SessionInfo, error) {

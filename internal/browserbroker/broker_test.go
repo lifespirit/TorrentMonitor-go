@@ -1,18 +1,24 @@
 package browserbroker
 
 import (
-	"encoding/json"
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
 
-func TestOpenRequestDecodesSingleTab(t *testing.T) {
-	var req OpenRequest
-	if err := json.Unmarshal([]byte(`{"tracker":"extensions","url":"chrome://extensions/","single_tab":true}`), &req); err != nil {
-		t.Fatalf("decode OpenRequest: %v", err)
-	}
-	if !req.SingleTab {
-		t.Fatal("single_tab was not decoded")
+func TestCloseBrowserTarget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/json/close/target-1" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if err := closeBrowserTarget(context.Background(), server.URL, "target-1"); err != nil {
+		t.Fatalf("closeBrowserTarget: %v", err)
 	}
 }
 

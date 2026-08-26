@@ -443,7 +443,7 @@ async function openBrowserExtensions() {
   try {
     const result = await api("/api/v1/browser/sessions", {
       method: "POST",
-      body: JSON.stringify({tracker: "torrentmonitor-extensions", url: "chrome://extensions/", single_tab: true}),
+      body: JSON.stringify({tracker: "torrentmonitor-extensions", url: "chrome://extensions/"}),
     })
     if (!result.viewer_url) throw new Error("Chromium не вернул адрес окна")
     window.open(result.viewer_url, "tm-browser-extensions", "noopener,noreferrer")
