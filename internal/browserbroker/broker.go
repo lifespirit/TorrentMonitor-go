@@ -741,6 +741,25 @@ func (b *Broker) Close(id string) error {
 	return nil
 }
 
+// Detach stops CDP rendering for a viewer session but leaves its Chromium tab
+// open. This is useful for service pages that should survive closing the viewer.
+func (b *Broker) Detach(id string) error {
+	b.mu.Lock()
+	s := b.sessions[id]
+	if s != nil {
+		delete(b.sessions, id)
+		if b.byTracker[s.tracker] == id {
+			delete(b.byTracker, s.tracker)
+		}
+	}
+	b.mu.Unlock()
+	if s == nil {
+		return ErrSessionNotFound
+	}
+	s.Detach()
+	return nil
+}
+
 // CloseTracker closes the live page associated with tracker. Browser profile
 // data (including cookies) remains in the shared Chromium profile, so the next
 // check can open a clean page without losing an authenticated session.

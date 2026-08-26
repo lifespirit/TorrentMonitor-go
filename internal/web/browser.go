@@ -125,6 +125,11 @@ func (s *Server) apiBrowserSessionByID(w http.ResponseWriter, r *http.Request) {
 		writeBrowserJSON(w, map[string]any{"ok": err == nil, "viewer_closed": viewerClosed}, err)
 		return
 	}
+	if r.Method == http.MethodPost && action == "detach" {
+		err := s.browser.Detach(id)
+		writeBrowserJSON(w, map[string]any{"ok": err == nil}, err)
+		return
+	}
 	if r.Method == http.MethodPost && action == "done" {
 		info, err := s.browser.Done(r.Context(), id)
 		message := "Сессия помечена как проверенная. Повтори проверку логина или темы."
@@ -221,6 +226,7 @@ var browserViewerTemplate = template.Must(template.New("browser-viewer").Parse(`
   <span id="status">подключение…</span>
   <button id="done" type="button">Продолжить</button>
   <button id="close" type="button">Закрыть вкладку</button>
+  <button id="detach" type="button">Закрыть просмотр</button>
   <input id="address" type="text" aria-label="Адрес" placeholder="https://chromewebstore.google.com/">
   <button id="navigate" type="button">Перейти</button>
   <select id="tabs" aria-label="Открытые вкладки"></select>
@@ -422,6 +428,12 @@ document.getElementById('close').addEventListener('click', async () => {
   refreshInfo();
   refreshFrame();
   refreshTabs();
+});
+document.getElementById('detach').addEventListener('click', async () => {
+  const r = await fetch('/api/v1/browser/sessions/' + encodeURIComponent(id) + '/detach', {method:'POST'});
+  const j = await r.json();
+  if (!r.ok) { alert(j.message || r.statusText); return; }
+  window.close();
 });
 refreshInfo(); refreshFrame();
 setInterval(refreshInfo, 3000);
