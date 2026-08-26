@@ -49,6 +49,24 @@ func TestCloseTrackerRemovesAndClosesSession(t *testing.T) {
 	}
 }
 
+func TestDetachRemovesSessionWithoutClosingPage(t *testing.T) {
+	session := &Session{tracker: "torrentmonitor-extensions", status: "running", closed: make(chan struct{})}
+	broker := &Broker{
+		sessions:  map[string]*Session{"session-1": session},
+		byTracker: map[string]string{"torrentmonitor-extensions": "session-1"},
+	}
+
+	if err := broker.Detach("session-1"); err != nil {
+		t.Fatalf("Detach: %v", err)
+	}
+	if len(broker.sessions) != 0 || len(broker.byTracker) != 0 {
+		t.Fatal("detached session remains registered")
+	}
+	if got := session.Status().Status; got != "detached" {
+		t.Fatalf("session status = %q, want detached", got)
+	}
+}
+
 func TestRetainedInteractionSessionExpires(t *testing.T) {
 	session := &Session{tracker: "rutracker.org", status: "running", closed: make(chan struct{})}
 	broker := &Broker{
