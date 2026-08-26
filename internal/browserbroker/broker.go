@@ -345,6 +345,23 @@ func listBrowserTargets(ctx context.Context, base string) ([]browserTarget, erro
 	return targets, nil
 }
 
+func closeBrowserTarget(ctx context.Context, base string, targetID string) error {
+	endpoint := strings.TrimRight(base, "/") + "/json/close/" + neturl.PathEscape(targetID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("close Chromium tab: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("close Chromium tab returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // FetchPage opens rawURL in the shared Chromium profile and returns the live DOM.
 // It is used by Chromium access mode in the site template runner, so monitor jobs
 // reuse the same browser session that the user used to pass Cloudflare/login.
@@ -614,6 +631,56 @@ func (b *Broker) SwitchTab(ctx context.Context, id string, targetID string) erro
 	old.Detach()
 	b.logger.Info("browser viewer switched tab", "session", id, "tracker", next.tracker, "url", candidate.URL, "target", candidate.ID)
 	return nil
+}
+
+// CloseTab closes a selected Chromium page. When it is the viewer's active
+// target, the viewer is moved to another page first so its window can remain
+// usable. The returned value reports that no replacement page was available.
+func (b *Broker) CloseTab(ctx context.Context, id string, targetID string) (bool, error) {
+	current := b.session(id)
+	if current == nil {
+		return false, ErrSessionNotFound
+	}
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		targetID = current.targetID
+	}
+	if targetID != current.targetID {
+		return false, closeBrowserTarget(ctx, current.debuggerBase, targetID)
+	}
+
+	targets, err := listBrowserTargets(ctx, current.debuggerBase)
+	if err != nil {
+		return false, err
+	}
+	var replacement string
+	for _, target := range targets {
+		if target.Type == "page" && target.ID != targetID && target.WebSocketDebuggerURL != "" && target.URL != "about:blank" {
+			replacement = target.ID
+			break
+		}
+	}
+	if replacement == "" {
+		for _, target := range targets {
+			if target.Type == "page" && target.ID != targetID && target.WebSocketDebuggerURL != "" {
+				replacement = target.ID
+				break
+			}
+		}
+	}
+	if replacement == "" {
+		if err := b.Close(id); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err := b.SwitchTab(ctx, id, replacement); err != nil {
+		return false, err
+	}
+	if err := closeBrowserTarget(ctx, current.debuggerBase, targetID); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 func (b *Broker) Done(ctx context.Context, id string) (SessionInfo, error) {

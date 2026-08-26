@@ -1,9 +1,26 @@
 package browserbroker
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+func TestCloseBrowserTarget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/json/close/target-1" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if err := closeBrowserTarget(context.Background(), server.URL, "target-1"); err != nil {
+		t.Fatalf("closeBrowserTarget: %v", err)
+	}
+}
 
 type discardLogger struct{}
 

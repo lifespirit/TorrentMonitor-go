@@ -113,6 +113,18 @@ func (s *Server) apiBrowserSessionByID(w http.ResponseWriter, r *http.Request) {
 		writeBrowserJSON(w, map[string]any{"ok": err == nil}, err)
 		return
 	}
+	if r.Method == http.MethodPost && action == "close-tab" {
+		var req struct {
+			TargetID string `json:"target_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		viewerClosed, err := s.browser.CloseTab(r.Context(), id, req.TargetID)
+		writeBrowserJSON(w, map[string]any{"ok": err == nil, "viewer_closed": viewerClosed}, err)
+		return
+	}
 	if r.Method == http.MethodPost && action == "done" {
 		info, err := s.browser.Done(r.Context(), id)
 		message := "Сессия помечена как проверенная. Повтори проверку логина или темы."
@@ -399,8 +411,17 @@ document.getElementById('done').addEventListener('click', async () => {
   if (r.ok && j.session && j.session.status === 'user_done') window.close();
 });
 document.getElementById('close').addEventListener('click', async () => {
-  await fetch('/api/v1/browser/sessions/' + encodeURIComponent(id), {method:'DELETE'});
-  window.close();
+  const targetID = tabsEl.value;
+  if (!targetID) return;
+  const r = await fetch('/api/v1/browser/sessions/' + encodeURIComponent(id) + '/close-tab', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({target_id:targetID})
+  });
+  const j = await r.json();
+  if (!r.ok) { alert(j.message || r.statusText); return; }
+  if (j.viewer_closed) { window.close(); return; }
+  refreshInfo();
+  refreshFrame();
+  refreshTabs();
 });
 refreshInfo(); refreshFrame();
 setInterval(refreshInfo, 3000);
