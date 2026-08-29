@@ -72,7 +72,14 @@ func (a *nativeSiteAccess) Prepare(ctx context.Context, vars map[string]string, 
 }
 
 func (a *nativeSiteAccess) FetchPage(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
-	return a.runner.do(ctx, a.client, spec, vars, settings)
+	data, err := a.runner.do(ctx, a.client, spec, vars, settings)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTemplatePage(a.tmpl, data); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func (a *nativeSiteAccess) DownloadTorrent(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
@@ -106,11 +113,23 @@ func (a *chromiumSiteAccess) FetchPage(ctx context.Context, spec HTTPRequest, va
 	if !requestCanUseBrowser(spec, rawURL) {
 		return nil, fmt.Errorf("chromium page fetch supports browser-loadable GET URLs only: method=%q url=%q", spec.Method, rawURL)
 	}
+	var (
+		data []byte
+		err  error
+	)
 	if waiter, ok := a.browser.(BrowserPageWaiter); ok {
 		success := renderMatchRules(spec.Success, vars)
-		return waiter.FetchPageWait(ctx, a.tmpl.Site, rawURL, settings.Timeout, expectedURLNeedles(rawURL), requiredAllMarkers(success), requiredAnyMarkers(success), strings.TrimSpace(success.Regex))
+		data, err = waiter.FetchPageWait(ctx, a.tmpl.Site, rawURL, settings.Timeout, expectedURLNeedles(rawURL), requiredAllMarkers(success), requiredAnyMarkers(success), strings.TrimSpace(success.Regex))
+	} else {
+		data, err = a.browser.FetchPage(ctx, a.tmpl.Site, rawURL)
 	}
-	return a.browser.FetchPage(ctx, a.tmpl.Site, rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateTemplatePage(a.tmpl, data); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func (a *chromiumSiteAccess) DownloadTorrent(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
