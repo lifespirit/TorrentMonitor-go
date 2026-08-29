@@ -22,7 +22,6 @@ urls:
   login: https://tapochek.net/login.php
   auth_check: https://tapochek.net/index.php
   topic: https://tapochek.net/viewtopic.php?t={{ item.torrent_id }}
-  download: https://tapochek.net/dl.php?t={{ item.torrent_id }}
 
 http:
   proxy: inherit
@@ -51,9 +50,9 @@ auth:
 topic:
   ready:
     url:
-      exact: https://tapochek.net/forum/viewtopic.php?t={{ item.torrent_id }}
+      exact: https://tapochek.net/viewtopic.php?t={{ item.torrent_id }}
     dom_contains:
-      - dl.php?t={{ item.torrent_id }}
+      - download.php?id=
 
   title:
     selector: title
@@ -71,15 +70,12 @@ topic:
       - раздача закрыта
 
 download:
-  url: https://tapochek.net/dl.php?t={{ item.torrent_id }}
+  url_from_page:
+    selector: body
+    regex: "href=[\"']((?:https?://[^\"']+)?/?download\\.php\\?id=[0-9][^\"']*)[\"']"
   before:
     headers:
       Referer: https://tapochek.net/viewtopic.php?t={{ item.torrent_id }}
-    set_cookie:
-      - name: bb_dl
-        value: "{{ item.torrent_id }}"
-        domain: tapochek.net
-        path: /
   validate:
     bencode_torrent: true
     max_size_mb: 5
