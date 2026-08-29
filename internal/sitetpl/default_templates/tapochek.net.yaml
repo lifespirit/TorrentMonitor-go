@@ -55,13 +55,13 @@ topic:
       - download.php?id=
 
   title:
-    selector: title
+    selector: body
+    regex: '(?is)<h1[^>]*class="maintitle"[^>]*>\s*<a[^>]*>(.*?)</a>\s*</h1>'
 
   updated_at:
     selector: body
-    regex: "([0-9]{2}-[А-Яа-я]{3}-[0-9]{2} [0-9]{2}:[0-9]{2})"
-    layout: "02-Jan-06 15:04"
-    locale: ru
+    regex: '(?is)Трекер:\s*</td>\s*<td[^>]*>.*?<span[^>]*>([0-9]{2}-[0-9]{2}-[0-9]{4} [0-9]{2}:[0-9]{2})</span>'
+    layout: "02-01-2006 15:04"
     timezone: Europe/Moscow
 
   closed:
