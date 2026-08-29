@@ -32,7 +32,7 @@ auth:
     method: GET
     url: https://tapochek.net/index.php
     success:
-      contains: profile.php?mode=viewprofile
+      contains: login.php?logout=1
   login_form:
     method: POST
     url: https://tapochek.net/login.php
@@ -46,6 +46,8 @@ auth:
       login_username: "{{ credentials.login }}"
       login_password: "{{ credentials.password }}"
       login: Вход
+    success:
+      contains: login.php?logout=1
 
 topic:
   ready:
