@@ -46,7 +46,7 @@ auth:
     form:
       login_username: "{{ credentials.login }}"
       login_password: "{{ credentials.password }}"
-      login: Вход
+      login: "1"
 
 topic:
   ready:

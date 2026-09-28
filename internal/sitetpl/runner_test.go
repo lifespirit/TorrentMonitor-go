@@ -236,7 +236,7 @@ func (f *fakeFlareSolverrFetcher) FetchPage(ctx context.Context, tracker string,
 	return []byte(f.html), nil
 }
 
-func (f *fakeFlareSolverrFetcher) Request(ctx context.Context, tracker, method, rawURL, postData string, headers, cookies map[string]string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error) {
+func (f *fakeFlareSolverrFetcher) Request(ctx context.Context, tracker, method, rawURL, postData string, cookies map[string]string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error) {
 	f.calls = append(f.calls, method+" "+tracker+" "+rawURL+" "+postData)
 	if method == http.MethodPost {
 		return []byte("login ok"), nil
