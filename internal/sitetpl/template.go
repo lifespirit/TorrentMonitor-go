@@ -57,12 +57,20 @@ type HTTPConfig struct {
 }
 
 type Auth struct {
-	Type      string       `json:"type" yaml:"type"`
-	Check     *HTTPRequest `json:"check" yaml:"check"`
-	Login     *HTTPRequest `json:"login" yaml:"login"`
-	LoginForm *HTTPRequest `json:"login_form" yaml:"login_form"`
-	LoggedIn  MatchRules   `json:"logged_in" yaml:"logged_in"`
-	Steps     []Step       `json:"steps" yaml:"steps"`
+	Type      string         `json:"type" yaml:"type"`
+	Check     *HTTPRequest   `json:"check" yaml:"check"`
+	Login     *HTTPRequest   `json:"login" yaml:"login"`
+	LoginForm *HTTPRequest   `json:"login_form" yaml:"login_form"`
+	Captcha   *CaptchaConfig `json:"captcha" yaml:"captcha"`
+	LoggedIn  MatchRules     `json:"logged_in" yaml:"logged_in"`
+	Steps     []Step         `json:"steps" yaml:"steps"`
+}
+
+type CaptchaConfig struct {
+	Type           string `json:"type" yaml:"type"`
+	URL            string `json:"url" yaml:"url"`
+	TabsTillVerify int    `json:"tabs_till_verify" yaml:"tabs_till_verify"`
+	FormField      string `json:"form_field" yaml:"form_field"`
 }
 
 type ItemFlow struct {

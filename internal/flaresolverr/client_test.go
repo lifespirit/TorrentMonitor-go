@@ -112,3 +112,92 @@ func TestClientReusesSessionAndDownloadsWithSolvedIdentity(t *testing.T) {
 		t.Fatalf("commands = %q", got)
 	}
 }
+
+
+func TestClientSolvesTurnstileAndReusesSession(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		commands []string
+		sessions []string
+	)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1", func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		cmd, _ := req["cmd"].(string)
+		if session, _ := req["session"].(string); session != "" {
+			mu.Lock()
+			sessions = append(sessions, session)
+			mu.Unlock()
+		}
+		mu.Lock()
+		commands = append(commands, cmd)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch cmd {
+		case "sessions.create":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		case "request.get":
+			target, _ := req["url"].(string)
+			response := map[string]any{
+				"url":       target,
+				"status":    200,
+				"response":  "<html>ok</html>",
+				"userAgent": "flaresolverr-test-agent",
+				"cookies":   []map[string]any{},
+			}
+			if tabs, ok := req["tabs_till_verify"]; ok {
+				if int(tabs.(float64)) != 34 {
+					t.Fatalf("tabs_till_verify = %v", tabs)
+				}
+				response["turnstile_token"] = "token-123"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "solution": response})
+		case "sessions.destroy":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		default:
+			http.Error(w, "unexpected command", http.StatusBadRequest)
+		}
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := New(Config{URL: srv.URL + "/v1", Timeout: 5 * time.Second}, nil)
+	token, err := client.SolveTurnstile(
+		context.Background(),
+		"nnmclub.to",
+		"https://nnmclub.to/forum/login.php",
+		nil,
+		34,
+		5*time.Second,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("SolveTurnstile: %v", err)
+	}
+	if token != "token-123" {
+		t.Fatalf("token = %q", token)
+	}
+	if _, err := client.Request(context.Background(), "nnmclub.to", http.MethodGet, "https://nnmclub.to/forum/index.php", "", nil, 5*time.Second, "", ""); err != nil {
+		t.Fatalf("Request after Turnstile: %v", err)
+	}
+	client.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if got := strings.Join(commands, ","); got != "sessions.create,request.get,request.get,sessions.destroy" {
+		t.Fatalf("commands = %q", got)
+	}
+	if len(sessions) < 4 {
+		t.Fatalf("sessions = %v", sessions)
+	}
+	createdSession := sessions[0]
+	for _, session := range sessions[1:] {
+		if session != createdSession {
+			t.Fatalf("session changed: %v", sessions)
+		}
+	}
+}

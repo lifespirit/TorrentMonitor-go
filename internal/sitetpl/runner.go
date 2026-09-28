@@ -350,6 +350,12 @@ type BrowserRequester interface {
 	Request(ctx context.Context, tracker, method, rawURL, postData string, cookies map[string]string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error)
 }
 
+// BrowserTurnstileSolver performs a Turnstile-enabled GET in the same stable
+// browser session used for the subsequent login POST and returns the solved token.
+type BrowserTurnstileSolver interface {
+	SolveTurnstile(ctx context.Context, tracker, rawURL string, cookies map[string]string, tabsTillVerify int, timeout time.Duration, proxyType, proxyAddress string) (string, error)
+}
+
 // BrowserDownloader performs binary downloads with the solved browser cookies
 // and User-Agent. FlareSolverr itself returns rendered HTML, so torrent files
 // are fetched by the backend's native HTTP client using that solved identity.

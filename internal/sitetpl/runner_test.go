@@ -297,3 +297,120 @@ func TestRunnerLegacyChromiumModeUsesFlareSolverrAndPerformsLogin(t *testing.T) 
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
+
+
+type fakeTurnstileFlareSolverr struct {
+	calls     []string
+	loggedIn  bool
+	postData  string
+	tabs      int
+	captchaURL string
+}
+
+func (f *fakeTurnstileFlareSolverr) FetchPage(ctx context.Context, tracker string, rawURL string) ([]byte, error) {
+	return f.Request(ctx, tracker, http.MethodGet, rawURL, "", nil, 0, "", "")
+}
+
+func (f *fakeTurnstileFlareSolverr) Request(ctx context.Context, tracker, method, rawURL, postData string, cookies map[string]string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error) {
+	f.calls = append(f.calls, method+" "+rawURL)
+	if method == http.MethodPost {
+		f.postData = postData
+		f.loggedIn = true
+		return []byte("login ok"), nil
+	}
+	if strings.HasSuffix(rawURL, "/index") {
+		if f.loggedIn {
+			return []byte("login.php?logout=true"), nil
+		}
+		return []byte("guest"), nil
+	}
+	return []byte("page"), nil
+}
+
+func (f *fakeTurnstileFlareSolverr) SolveTurnstile(ctx context.Context, tracker, rawURL string, cookies map[string]string, tabsTillVerify int, timeout time.Duration, proxyType, proxyAddress string) (string, error) {
+	f.calls = append(f.calls, "TURNSTILE "+rawURL)
+	f.tabs = tabsTillVerify
+	f.captchaURL = rawURL
+	return "token-123", nil
+}
+
+func TestFlareSolverrPrepareSolvesTurnstileBeforeLogin(t *testing.T) {
+	solver := &fakeTurnstileFlareSolverr{}
+	tmpl := Template{
+		Version: 1,
+		Site:    "nnm.test",
+		Auth: Auth{
+			Check: &HTTPRequest{Method: "GET", URL: "https://nnm.test/index", Success: MatchRules{Contains: "logout=true"}},
+			Login: &HTTPRequest{
+				Method: "POST",
+				URL:    "https://nnm.test/login",
+				Form: map[string]string{
+					"username": "{{ credentials.login }}",
+					"password": "{{ credentials.password }}",
+					"login":    "1",
+				},
+			},
+			Captcha: &CaptchaConfig{
+				Type:           "turnstile",
+				URL:            "https://nnm.test/login",
+				TabsTillVerify: 34,
+				FormField:      "cf-turnstile-response",
+			},
+		},
+	}
+	access := &flareSolverrSiteAccess{
+		tmpl:    tmpl,
+		browser: solver,
+		cred:    Credential{Login: "user", Password: "pass"},
+	}
+	vars := map[string]string{
+		"credentials.login":    "user",
+		"credentials.password": "pass",
+	}
+	if err := access.Prepare(context.Background(), vars, Settings{Timeout: 5 * time.Second}); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if solver.tabs != 34 {
+		t.Fatalf("tabs_till_verify = %d, want 34", solver.tabs)
+	}
+	if solver.captchaURL != "https://nnm.test/login" {
+		t.Fatalf("captcha URL = %q", solver.captchaURL)
+	}
+	if !strings.Contains(solver.postData, "cf-turnstile-response=token-123") {
+		t.Fatalf("POST does not contain Turnstile token: %q", solver.postData)
+	}
+	if !strings.Contains(solver.postData, "username=user") || !strings.Contains(solver.postData, "password=pass") {
+		t.Fatalf("POST lost credentials: %q", solver.postData)
+	}
+	want := []string{
+		"GET https://nnm.test/index",
+		"TURNSTILE https://nnm.test/login",
+		"POST https://nnm.test/login",
+		"GET https://nnm.test/index",
+	}
+	if strings.Join(solver.calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls = %v, want %v", solver.calls, want)
+	}
+}
+
+func TestDefaultNNMClubTemplateConfiguresTurnstileLogin(t *testing.T) {
+	tmpl := DefaultNNMClubTemplate()
+	if tmpl.Auth.Captcha == nil {
+		t.Fatal("NNM-Club captcha config is missing")
+	}
+	if tmpl.Auth.Captcha.Type != "turnstile" {
+		t.Fatalf("captcha type = %q", tmpl.Auth.Captcha.Type)
+	}
+	if tmpl.Auth.Captcha.URL != "https://nnmclub.to/forum/login.php" {
+		t.Fatalf("captcha URL = %q", tmpl.Auth.Captcha.URL)
+	}
+	if tmpl.Auth.Captcha.TabsTillVerify != 34 {
+		t.Fatalf("tabs_till_verify = %d", tmpl.Auth.Captcha.TabsTillVerify)
+	}
+	if tmpl.Auth.Captcha.FormField != "cf-turnstile-response" {
+		t.Fatalf("form field = %q", tmpl.Auth.Captcha.FormField)
+	}
+	if tmpl.Auth.Login == nil || tmpl.Auth.Login.Form["login"] != "1" {
+		t.Fatalf("NNM-Club submit value was not normalized to ASCII")
+	}
+}
