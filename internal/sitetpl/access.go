@@ -168,7 +168,7 @@ func (a *flareSolverrSiteAccess) request(ctx context.Context, spec HTTPRequest, 
 		postData = encodeForm(spec.Form, vars, spec.FormEncoding)
 	}
 	if requester, ok := a.browser.(BrowserRequester); ok {
-		data, err := requester.Request(ctx, a.tmpl.Site, method, rawURL, postData, cookies, settings.Timeout, proxyType, proxyAddress)
+		data, err := requester.Request(ctx, a.tmpl.Site, method, rawURL, postData, renderedHeaders(spec.Headers, vars), cookies, settings.Timeout, proxyType, proxyAddress)
 		if err != nil {
 			return nil, err
 		}

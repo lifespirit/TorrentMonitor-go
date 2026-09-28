@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"sort"
 	"strconv"
@@ -145,21 +146,23 @@ func (c *Client) Close() {
 }
 
 func (c *Client) FetchPage(ctx context.Context, tracker string, rawURL string) ([]byte, error) {
-	return c.Request(ctx, tracker, http.MethodGet, rawURL, "", nil, 0, "", "")
+	return c.Request(ctx, tracker, http.MethodGet, rawURL, "", nil, nil, 0, "", "")
 }
 
 func (c *Client) FetchPageWait(ctx context.Context, tracker string, rawURL string, timeout time.Duration, expectedURLNeedles []string, requiredAll []string, requiredAny []string, requiredRegex string) ([]byte, error) {
-	data, err := c.Request(ctx, tracker, http.MethodGet, rawURL, "", nil, timeout, "", "")
+	data, err := c.Request(ctx, tracker, http.MethodGet, rawURL, "", nil, nil, timeout, "", "")
 	if err != nil {
 		return nil, err
 	}
 	return data, nil
 }
 
-// Request executes a GET or application/x-www-form-urlencoded POST through
-// FlareSolverr. A stable FlareSolverr session is kept per tracker so Cloudflare
-// clearance and tracker login cookies are reused by subsequent checks.
-func (c *Client) Request(ctx context.Context, tracker, method, rawURL, postData string, cookies map[string]string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error) {
+// Request keeps a stable FlareSolverr browser session per tracker. GET requests
+// are rendered by FlareSolverr. Form POSTs are sent natively with the exact
+// application/x-www-form-urlencoded body, while reusing the User-Agent and
+// cookies solved by FlareSolverr. This avoids FlareSolverr request.post
+// re-encoding legacy encodings such as Windows-1251.
+func (c *Client) Request(ctx context.Context, tracker, method, rawURL, postData string, headers, cookies map[string]string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error) {
 	if err := validateHTTPURL(rawURL); err != nil {
 		return nil, err
 	}
@@ -181,35 +184,17 @@ func (c *Client) Request(ctx context.Context, tracker, method, rawURL, postData 
 	if timeout <= 0 {
 		timeout = cfg.Timeout
 	}
-	cmd := "request.get"
 	if method == http.MethodPost {
-		cmd = "request.post"
+		return c.postNative(ctx, tracker, rawURL, postData, headers, cookies, timeout, proxyType, proxyAddress, state, cfg)
 	}
 	payload := map[string]any{
-		"cmd":        cmd,
+		"cmd":        "request.get",
 		"url":        rawURL,
 		"session":    state.ID,
 		"maxTimeout": timeout.Milliseconds(),
 	}
-	if method == http.MethodPost {
-		payload["postData"] = postData
-	}
-	if len(cookies) > 0 {
-		items := make([]map[string]string, 0, len(cookies))
-		keys := make([]string, 0, len(cookies))
-		for k := range cookies {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			if strings.TrimSpace(k) == "" {
-				continue
-			}
-			items = append(items, map[string]string{"name": k, "value": cookies[k]})
-		}
-		if len(items) > 0 {
-			payload["cookies"] = items
-		}
+	if items := c.requestCookies(state, cookies); len(items) > 0 {
+		payload["cookies"] = items
 	}
 	resp, err := c.call(ctx, cfg, payload, timeout)
 	if err != nil {
@@ -234,6 +219,180 @@ func (c *Client) Request(ctx context.Context, tracker, method, rawURL, postData 
 		c.logger.Info("FlareSolverr request completed", "tracker", tracker, "url", rawURL, "status", resp.Solution.Status, "cookies", len(resp.Solution.Cookies))
 	}
 	return []byte(resp.Solution.Response), nil
+}
+
+func (c *Client) requestCookies(state *sessionState, explicit map[string]string) []map[string]any {
+	c.mu.Lock()
+	stored := append([]Cookie(nil), state.Cookies...)
+	c.mu.Unlock()
+
+	byName := make(map[string]Cookie, len(stored)+len(explicit))
+	for _, cookie := range stored {
+		if strings.TrimSpace(cookie.Name) != "" {
+			byName[cookie.Name] = cookie
+		}
+	}
+	for name, value := range explicit {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		cookie := byName[name]
+		cookie.Name = name
+		cookie.Value = value
+		byName[name] = cookie
+	}
+	keys := make([]string, 0, len(byName))
+	for name := range byName {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+
+	items := make([]map[string]any, 0, len(keys))
+	for _, name := range keys {
+		cookie := byName[name]
+		item := map[string]any{"name": cookie.Name, "value": cookie.Value}
+		if strings.TrimSpace(cookie.Domain) != "" {
+			item["domain"] = cookie.Domain
+		}
+		if strings.TrimSpace(cookie.Path) != "" {
+			item["path"] = cookie.Path
+		}
+		if cookie.Secure {
+			item["secure"] = true
+		}
+		if cookie.HTTPOnly {
+			item["httpOnly"] = true
+		}
+		if strings.TrimSpace(cookie.SameSite) != "" {
+			item["sameSite"] = cookie.SameSite
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+func (c *Client) postNative(ctx context.Context, tracker, rawURL, postData string, headers, explicitCookies map[string]string, timeout time.Duration, proxyType, proxyAddress string, state *sessionState, cfg Config) ([]byte, error) {
+	c.mu.Lock()
+	snapshot := *state
+	snapshot.Cookies = append([]Cookie(nil), state.Cookies...)
+	c.mu.Unlock()
+	if strings.TrimSpace(snapshot.UserAgent) == "" {
+		return nil, errors.New("FlareSolverr session has no browser identity yet; GET must be completed before POST")
+	}
+
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	jar, _ := cookiejar.New(nil)
+	seed := make([]*http.Cookie, 0, len(snapshot.Cookies)+len(explicitCookies))
+	for _, cookie := range snapshot.Cookies {
+		if strings.TrimSpace(cookie.Name) == "" || !cookieMatches(cookie, u) {
+			continue
+		}
+		path := cookie.Path
+		if strings.TrimSpace(path) == "" {
+			path = "/"
+		}
+		seed = append(seed, &http.Cookie{
+			Name:     cookie.Name,
+			Value:    cookie.Value,
+			Domain:   cookie.Domain,
+			Path:     path,
+			Secure:   cookie.Secure,
+			HttpOnly: cookie.HTTPOnly,
+		})
+	}
+	for name, value := range explicitCookies {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			seed = append(seed, &http.Cookie{Name: name, Value: value, Path: "/"})
+		}
+	}
+	jar.SetCookies(u, seed)
+
+	transport, err := proxyTransport(proxyType, proxyAddress)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Transport: transport, Timeout: timeout, Jar: jar}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, strings.NewReader(postData))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for name, value := range headers {
+		if strings.TrimSpace(name) != "" {
+			req.Header.Set(name, value)
+		}
+	}
+	// Cloudflare clearance is tied to the browser identity. Always prefer the
+	// User-Agent returned by FlareSolverr over a template/global override.
+	req.Header.Set("User-Agent", snapshot.UserAgent)
+
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(res.Body, 32<<20))
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 400 {
+		return nil, fmt.Errorf("%s returned HTTP %d", rawURL, res.StatusCode)
+	}
+
+	fresh := append([]*http.Cookie(nil), jar.Cookies(u)...)
+	if res.Request != nil && res.Request.URL != nil && res.Request.URL.String() != u.String() {
+		fresh = append(fresh, jar.Cookies(res.Request.URL)...)
+	}
+	c.mu.Lock()
+	if current := c.sessions[sessionKey(tracker)]; current != nil && current.ID == snapshot.ID {
+		current.Cookies = mergeHTTPCookies(current.Cookies, fresh)
+	}
+	c.mu.Unlock()
+	if cfg.Debug {
+		c.logger.Info("native form POST completed with FlareSolverr identity", "tracker", tracker, "url", rawURL, "status", res.StatusCode, "cookies", len(fresh))
+	}
+	return data, nil
+}
+
+func mergeHTTPCookies(existing []Cookie, fresh []*http.Cookie) []Cookie {
+	byName := make(map[string]Cookie, len(existing)+len(fresh))
+	for _, cookie := range existing {
+		if strings.TrimSpace(cookie.Name) != "" {
+			byName[cookie.Name] = cookie
+		}
+	}
+	for _, cookie := range fresh {
+		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
+			continue
+		}
+		current := byName[cookie.Name]
+		current.Name = cookie.Name
+		current.Value = cookie.Value
+		if strings.TrimSpace(cookie.Domain) != "" {
+			current.Domain = cookie.Domain
+		}
+		if strings.TrimSpace(cookie.Path) != "" {
+			current.Path = cookie.Path
+		}
+		current.Secure = current.Secure || cookie.Secure
+		current.HTTPOnly = current.HTTPOnly || cookie.HttpOnly
+		byName[cookie.Name] = current
+	}
+	keys := make([]string, 0, len(byName))
+	for name := range byName {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	out := make([]Cookie, 0, len(keys))
+	for _, name := range keys {
+		out = append(out, byName[name])
+	}
+	return out
 }
 
 // Download performs the binary request with the cookies and User-Agent returned
