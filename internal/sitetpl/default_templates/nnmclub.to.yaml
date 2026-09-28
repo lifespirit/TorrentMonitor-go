@@ -46,7 +46,7 @@ auth:
     captcha:
       type: turnstile
       url: https://nnmclub.to/forum/login.php
-      tabs_till_verify: 35
+      tabs_till_verify: 36
       form_field: cf-turnstile-response
     headers:
       Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
