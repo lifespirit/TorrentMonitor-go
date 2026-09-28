@@ -284,13 +284,16 @@ func TestRunnerLegacyChromiumModeUsesFlareSolverrAndPerformsLogin(t *testing.T) 
 	if loginCalled {
 		t.Fatalf("native login endpoint was called in FlareSolverr mode")
 	}
-	if len(solver.calls) != 2 {
-		t.Fatalf("FlareSolverr calls = %v, want POST login + GET topic", solver.calls)
+	if len(solver.calls) != 3 {
+		t.Fatalf("FlareSolverr calls = %v, want GET login preflight + POST login + GET topic", solver.calls)
 	}
-	if !strings.HasPrefix(solver.calls[0], "POST ") || !strings.Contains(solver.calls[0], "u=user") || !strings.Contains(solver.calls[0], "p=pass") {
+	if !strings.HasPrefix(solver.calls[0], "GET ") || !strings.Contains(solver.calls[0], "/login") {
+		t.Fatalf("unexpected POST preflight call: %v", solver.calls)
+	}
+	if !strings.HasPrefix(solver.calls[1], "POST ") || !strings.Contains(solver.calls[1], "u=user") || !strings.Contains(solver.calls[1], "p=pass") {
 		t.Fatalf("unexpected login call: %v", solver.calls)
 	}
-	if !strings.HasPrefix(solver.calls[1], "GET ") {
+	if !strings.HasPrefix(solver.calls[2], "GET ") {
 		t.Fatalf("unexpected topic call: %v", solver.calls)
 	}
 	if !result.Updated || result.Title != "FlareSolverr Release" {
@@ -348,12 +351,12 @@ func TestFlareSolverrPrepareSolvesTurnstileBeforeLogin(t *testing.T) {
 					"password": "{{ credentials.password }}",
 					"login":    "1",
 				},
-			},
-			Captcha: &CaptchaConfig{
-				Type:           "turnstile",
-				URL:            "https://nnm.test/login",
-				TabsTillVerify: 34,
-				FormField:      "cf-turnstile-response",
+				Captcha: &CaptchaConfig{
+					Type:           "turnstile",
+					URL:            "https://nnm.test/login",
+					TabsTillVerify: 34,
+					FormField:      "cf-turnstile-response",
+				},
 			},
 		},
 	}
@@ -394,22 +397,22 @@ func TestFlareSolverrPrepareSolvesTurnstileBeforeLogin(t *testing.T) {
 
 func TestDefaultNNMClubTemplateConfiguresTurnstileLogin(t *testing.T) {
 	tmpl := DefaultNNMClubTemplate()
-	if tmpl.Auth.Captcha == nil {
-		t.Fatal("NNM-Club captcha config is missing")
+	if tmpl.Auth.Login == nil || tmpl.Auth.Login.Captcha == nil {
+		t.Fatal("NNM-Club login captcha config is missing")
 	}
-	if tmpl.Auth.Captcha.Type != "turnstile" {
-		t.Fatalf("captcha type = %q", tmpl.Auth.Captcha.Type)
+	if tmpl.Auth.Login.Captcha.Type != "turnstile" {
+		t.Fatalf("captcha type = %q", tmpl.Auth.Login.Captcha.Type)
 	}
-	if tmpl.Auth.Captcha.URL != "https://nnmclub.to/forum/login.php" {
-		t.Fatalf("captcha URL = %q", tmpl.Auth.Captcha.URL)
+	if tmpl.Auth.Login.Captcha.URL != "https://nnmclub.to/forum/login.php" {
+		t.Fatalf("captcha URL = %q", tmpl.Auth.Login.Captcha.URL)
 	}
-	if tmpl.Auth.Captcha.TabsTillVerify != 34 {
-		t.Fatalf("tabs_till_verify = %d", tmpl.Auth.Captcha.TabsTillVerify)
+	if tmpl.Auth.Login.Captcha.TabsTillVerify != 34 {
+		t.Fatalf("tabs_till_verify = %d", tmpl.Auth.Login.Captcha.TabsTillVerify)
 	}
-	if tmpl.Auth.Captcha.FormField != "cf-turnstile-response" {
-		t.Fatalf("form field = %q", tmpl.Auth.Captcha.FormField)
+	if tmpl.Auth.Login.Captcha.FormField != "cf-turnstile-response" {
+		t.Fatalf("form field = %q", tmpl.Auth.Login.Captcha.FormField)
 	}
-	if tmpl.Auth.Login == nil || tmpl.Auth.Login.Form["login"] != "1" {
+	if tmpl.Auth.Login.Form["login"] != "1" {
 		t.Fatalf("NNM-Club submit value was not normalized to ASCII")
 	}
 }

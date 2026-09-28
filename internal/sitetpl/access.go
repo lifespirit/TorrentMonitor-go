@@ -117,15 +117,7 @@ func (a *flareSolverrSiteAccess) Prepare(ctx context.Context, vars map[string]st
 	if strings.TrimSpace(a.cred.Login) == "" || strings.TrimSpace(a.cred.Password) == "" {
 		return errors.New("login and password are required for FlareSolverr mode")
 	}
-	loginSpec := *a.tmpl.Auth.Login
-	if a.tmpl.Auth.Captcha != nil {
-		var err error
-		loginSpec, err = a.prepareLoginCaptcha(ctx, loginSpec, vars, settings)
-		if err != nil {
-			return fmt.Errorf("flaresolverr login captcha: %w", err)
-		}
-	}
-	if _, err := a.request(ctx, loginSpec, vars, settings); err != nil {
+	if _, err := a.request(ctx, *a.tmpl.Auth.Login, vars, settings); err != nil {
 		return fmt.Errorf("flaresolverr login: %w", err)
 	}
 	if a.tmpl.Auth.Check != nil {
@@ -136,57 +128,57 @@ func (a *flareSolverrSiteAccess) Prepare(ctx context.Context, vars map[string]st
 	return nil
 }
 
-func (a *flareSolverrSiteAccess) prepareLoginCaptcha(ctx context.Context, loginSpec HTTPRequest, vars map[string]string, settings Settings) (HTTPRequest, error) {
-	cfg := a.tmpl.Auth.Captcha
+func (a *flareSolverrSiteAccess) preparePost(ctx context.Context, spec HTTPRequest, rawURL string, vars map[string]string, settings Settings) (HTTPRequest, bool, error) {
+	cfg := spec.Captcha
 	if cfg == nil {
-		return loginSpec, nil
+		return spec, false, nil
 	}
 	if !strings.EqualFold(strings.TrimSpace(cfg.Type), "turnstile") {
-		return HTTPRequest{}, fmt.Errorf("unsupported captcha type %q", cfg.Type)
+		return HTTPRequest{}, false, fmt.Errorf("unsupported captcha type %q", cfg.Type)
 	}
 	if cfg.TabsTillVerify <= 0 {
-		return HTTPRequest{}, errors.New("turnstile tabs_till_verify must be greater than zero")
+		return HTTPRequest{}, false, errors.New("turnstile tabs_till_verify must be greater than zero")
 	}
 	solver, ok := a.browser.(BrowserTurnstileSolver)
 	if !ok {
-		return HTTPRequest{}, errors.New("configured browser backend does not support Turnstile solving")
+		return HTTPRequest{}, false, errors.New("configured browser backend does not support Turnstile solving")
 	}
-	rawURL := strings.TrimSpace(render(cfg.URL, vars))
-	if rawURL == "" {
-		rawURL = strings.TrimSpace(render(loginSpec.URL, vars))
+	preflightURL := strings.TrimSpace(render(cfg.URL, vars))
+	if preflightURL == "" {
+		preflightURL = strings.TrimSpace(rawURL)
 	}
-	if rawURL == "" {
-		return HTTPRequest{}, errors.New("turnstile preflight URL is empty")
+	if preflightURL == "" {
+		return HTTPRequest{}, false, errors.New("turnstile preflight URL is empty")
 	}
 	proxyType, proxyAddress := a.proxy(settings)
 	token, err := solver.SolveTurnstile(
 		ctx,
 		a.tmpl.Site,
-		rawURL,
-		a.requestCookies(loginSpec, vars),
+		preflightURL,
+		a.requestCookies(spec, vars),
 		cfg.TabsTillVerify,
 		settings.Timeout,
 		proxyType,
 		proxyAddress,
 	)
 	if err != nil {
-		return HTTPRequest{}, err
+		return HTTPRequest{}, false, err
 	}
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return HTTPRequest{}, errors.New("turnstile token was not returned")
+		return HTTPRequest{}, false, errors.New("turnstile token was not returned")
 	}
 	field := strings.TrimSpace(cfg.FormField)
 	if field == "" {
 		field = "cf-turnstile-response"
 	}
-	form := make(map[string]string, len(loginSpec.Form)+1)
-	for k, v := range loginSpec.Form {
+	form := make(map[string]string, len(spec.Form)+1)
+	for k, v := range spec.Form {
 		form[k] = v
 	}
 	form[field] = token
-	loginSpec.Form = form
-	return loginSpec, nil
+	spec.Form = form
+	return spec, true, nil
 }
 
 func (a *flareSolverrSiteAccess) FetchPage(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
@@ -213,12 +205,25 @@ func (a *flareSolverrSiteAccess) request(ctx context.Context, spec HTTPRequest, 
 		return nil, errors.New("FlareSolverr request URL is empty")
 	}
 	proxyType, proxyAddress := a.proxy(settings)
-	cookies := a.requestCookies(spec, vars)
-	postData := ""
-	if len(spec.Form) > 0 {
-		postData = encodeForm(spec.Form, vars, spec.FormEncoding)
-	}
 	if requester, ok := a.browser.(BrowserRequester); ok {
+		preflightDone := false
+		if method == http.MethodPost {
+			var err error
+			spec, preflightDone, err = a.preparePost(ctx, spec, rawURL, vars, settings)
+			if err != nil {
+				return nil, fmt.Errorf("prepare FlareSolverr POST: %w", err)
+			}
+		}
+		cookies := a.requestCookies(spec, vars)
+		if method == http.MethodPost && !preflightDone {
+			if _, err := requester.Request(ctx, a.tmpl.Site, http.MethodGet, rawURL, "", cookies, settings.Timeout, proxyType, proxyAddress); err != nil {
+				return nil, fmt.Errorf("FlareSolverr POST preflight GET %s: %w", rawURL, err)
+			}
+		}
+		postData := ""
+		if len(spec.Form) > 0 {
+			postData = encodeForm(spec.Form, vars, spec.FormEncoding)
+		}
 		data, err := requester.Request(ctx, a.tmpl.Site, method, rawURL, postData, cookies, settings.Timeout, proxyType, proxyAddress)
 		if err != nil {
 			return nil, err

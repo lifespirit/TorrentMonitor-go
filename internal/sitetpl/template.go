@@ -57,13 +57,12 @@ type HTTPConfig struct {
 }
 
 type Auth struct {
-	Type      string         `json:"type" yaml:"type"`
-	Check     *HTTPRequest   `json:"check" yaml:"check"`
-	Login     *HTTPRequest   `json:"login" yaml:"login"`
-	LoginForm *HTTPRequest   `json:"login_form" yaml:"login_form"`
-	Captcha   *CaptchaConfig `json:"captcha" yaml:"captcha"`
-	LoggedIn  MatchRules     `json:"logged_in" yaml:"logged_in"`
-	Steps     []Step         `json:"steps" yaml:"steps"`
+	Type      string       `json:"type" yaml:"type"`
+	Check     *HTTPRequest `json:"check" yaml:"check"`
+	Login     *HTTPRequest `json:"login" yaml:"login"`
+	LoginForm *HTTPRequest `json:"login_form" yaml:"login_form"`
+	LoggedIn  MatchRules   `json:"logged_in" yaml:"logged_in"`
+	Steps     []Step       `json:"steps" yaml:"steps"`
 }
 
 type CaptchaConfig struct {
@@ -145,6 +144,7 @@ type HTTPRequest struct {
 	FormEncoding string            `json:"form_encoding" yaml:"form_encoding"`
 	Headers      map[string]string `json:"headers" yaml:"headers"`
 	Cookies      map[string]string `json:"cookies" yaml:"cookies"`
+	Captcha      *CaptchaConfig    `json:"captcha" yaml:"captcha"`
 	Success      MatchRules        `json:"success" yaml:"success"`
 }
 
