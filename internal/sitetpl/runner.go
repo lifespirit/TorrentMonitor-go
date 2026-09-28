@@ -347,7 +347,7 @@ type BrowserPageWaiter interface {
 // BrowserRequester lets FlareSolverr execute tracker GET/POST requests while
 // keeping a stable session per tracker. Legacy Chromium backends can omit it.
 type BrowserRequester interface {
-	Request(ctx context.Context, tracker, method, rawURL, postData string, cookies map[string]string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error)
+	Request(ctx context.Context, tracker, method, rawURL, postData string, headers, cookies map[string]string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error)
 }
 
 // BrowserDownloader performs binary downloads with the solved browser cookies
