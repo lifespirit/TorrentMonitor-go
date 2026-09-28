@@ -29,6 +29,10 @@ http:
 
 auth:
   type: form
+  logged_out:
+    contains_all:
+      - login_username
+      - login_password
   check:
     method: GET
     url: https://rutracker.org/forum/index.php
