@@ -298,12 +298,11 @@ func TestRunnerLegacyChromiumModeUsesFlareSolverrAndPerformsLogin(t *testing.T) 
 	}
 }
 
-
 type fakeTurnstileFlareSolverr struct {
-	calls     []string
-	loggedIn  bool
-	postData  string
-	tabs      int
+	calls      []string
+	loggedIn   bool
+	postData   string
+	tabs       int
 	captchaURL string
 }
 

@@ -113,7 +113,6 @@ func TestClientReusesSessionAndDownloadsWithSolvedIdentity(t *testing.T) {
 	}
 }
 
-
 func TestClientSolvesTurnstileAndReusesSession(t *testing.T) {
 	var (
 		mu       sync.Mutex
