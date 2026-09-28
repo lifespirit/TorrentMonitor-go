@@ -2,7 +2,7 @@
 
 ## Требования
 
-Для SQLite-сборки нужны Go 1.22+, C-компилятор, `pkg-config`, SQLite 3 с заголовками и Git. Chromium и Weston нужны только для браузерного режима.
+Для SQLite-сборки нужны Go 1.22+, C-компилятор, `pkg-config`, SQLite 3 с заголовками и Git. Для режима FlareSolverr нужен отдельно запущенный сервис FlareSolverr.
 
 Arch Linux:
 
@@ -15,8 +15,6 @@ Debian/Ubuntu:
 ```bash
 sudo apt install golang-go build-essential pkg-config libsqlite3-dev git
 ```
-
-Для Chromium-режима дополнительно установите `chromium` и `weston`.
 
 ## Получение исходников
 
@@ -57,7 +55,7 @@ GOMAXPROCS=2 CGO_ENABLED=1 go build \
   ./cmd/torrentmonitor
 ```
 
-На устройстве с небольшим объёмом RAM перед сборкой полезно включить swap/zram и остановить Chromium. После установки Go и компилятор можно удалить. Для минимальной нагрузки используйте режим **Native HTTP**.
+На устройстве с небольшим объёмом RAM перед сборкой полезно включить swap/zram. После установки Go и компилятор можно удалить. Для минимальной нагрузки используйте режим **Native HTTP**; FlareSolverr можно держать на другом хосте.
 
 ### Кросс-компиляция
 
@@ -73,6 +71,16 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
 ```
 
 Запускайте её с `TM_STORE=json`.
+
+## FlareSolverr
+
+После запуска FlareSolverr укажите его API в веб-интерфейсе или через переменную окружения:
+
+```ini
+Environment=TM_FLARESOLVERR_URL=http://127.0.0.1:8191/v1
+```
+
+FlareSolverr не обязан работать на том же хосте, что и TorrentMonitor, но для Cloudflare-защищённой загрузки `.torrent` у них должен совпадать внешний IP. Проще всего запускать их на одном хосте или использовать один и тот же proxy. Не публикуйте API FlareSolverr напрямую в интернет.
 
 ## Системный пользователь и каталоги
 

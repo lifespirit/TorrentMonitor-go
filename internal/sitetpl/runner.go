@@ -223,7 +223,7 @@ func (r *Registry) List() []TemplateInfo {
 			Name:              strings.TrimSpace(t.Name),
 			Domains:           append([]string(nil), t.Domains...),
 			Kind:              strings.TrimSpace(t.Kind),
-			DefaultAccessMode: strings.ToLower(strings.TrimSpace(mode)),
+			DefaultAccessMode: normalizeAccessMode(mode),
 			Source:            strings.TrimSpace(t.Source),
 		}
 	}
@@ -334,26 +334,27 @@ type Settings struct {
 	ProxyAddress string
 }
 
-// BrowserPageFetcher is implemented by the BrowserBroker. It lets the HTTP
-// template runner reuse the shared interactive Chromium profile for regular
-// page loads when credentials.access_mode == chromium.
+// BrowserPageFetcher is the minimal compatibility interface used by browser-like
+// backends. FlareSolverr implements the richer BrowserRequester interface below.
 type BrowserPageFetcher interface {
 	FetchPage(ctx context.Context, tracker string, rawURL string) ([]byte, error)
 }
 
-// BrowserPageWaiter is implemented by newer BrowserBroker versions. It waits
-// for the expected tracker URL and optional positive page markers instead of
-// trying to classify Cloudflare/challenge pages by their titles or text.
 type BrowserPageWaiter interface {
 	FetchPageWait(ctx context.Context, tracker string, rawURL string, timeout time.Duration, expectedURLNeedles []string, requiredAll []string, requiredAny []string, requiredRegex string) ([]byte, error)
 }
 
-// BrowserDownloader is implemented by BrowserBroker. It uses the same shared
-// Chromium profile to download binary files, which is required for trackers
-// that allow topic pages through Cloudflare but still reject native HTTP
-// requests to /dl.php.
+// BrowserRequester lets FlareSolverr execute tracker GET/POST requests while
+// keeping a stable session per tracker. Legacy Chromium backends can omit it.
+type BrowserRequester interface {
+	Request(ctx context.Context, tracker, method, rawURL, postData string, cookies map[string]string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error)
+}
+
+// BrowserDownloader performs binary downloads with the solved browser cookies
+// and User-Agent. FlareSolverr itself returns rendered HTML, so torrent files
+// are fetched by the backend's native HTTP client using that solved identity.
 type BrowserDownloader interface {
-	Download(ctx context.Context, tracker string, rawURL string, headers map[string]string, cookieHeader string) ([]byte, error)
+	Download(ctx context.Context, tracker string, rawURL string, headers map[string]string, cookieHeader string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error)
 }
 
 func (r *Runner) SetRegistry(registry *Registry) {
@@ -475,7 +476,7 @@ func (r *Runner) BrowserLoginTarget(tracker string) (LoginCheckResult, error) {
 	}
 	return LoginCheckResult{
 		OK:       false,
-		Message:  "Требуется интерактивная Chromium-сессия.",
+		Message:  "FlareSolverr выполняет challenge и логин автоматически.",
 		LoginURL: browserLoginURL(tmpl),
 	}, nil
 }
@@ -485,8 +486,8 @@ func (r *Runner) CheckLogin(ctx context.Context, req LoginCheckRequest) (LoginCh
 	if !ok {
 		return LoginCheckResult{}, fmt.Errorf("site template for %s is not registered", req.Tracker)
 	}
-	if strings.EqualFold(req.Credential.AccessMode, "chromium") {
-		return r.checkLoginChromium(ctx, tmpl, req)
+	if normalizeAccessMode(req.Credential.AccessMode) == "flaresolverr" {
+		return r.checkLoginFlareSolverr(ctx, tmpl, req)
 	}
 	return r.checkLoginNative(ctx, tmpl, req)
 }
@@ -522,35 +523,31 @@ func (r *Runner) checkLoginNative(ctx context.Context, tmpl Template, req LoginC
 	return LoginCheckResult{OK: true, Message: "Native-логин успешен, session cookie сохранена.", SessionCookie: cookieHeaderForTemplate(client, tmpl)}, nil
 }
 
-func (r *Runner) checkLoginChromium(ctx context.Context, tmpl Template, req LoginCheckRequest) (LoginCheckResult, error) {
-	loginURL := browserLoginURL(tmpl)
+func (r *Runner) checkLoginFlareSolverr(ctx context.Context, tmpl Template, req LoginCheckRequest) (LoginCheckResult, error) {
 	if req.Browser == nil {
-		return LoginCheckResult{}, errors.New("chromium access mode requires BrowserBroker")
+		return LoginCheckResult{}, errors.New("flaresolverr access mode requires FlareSolverr")
 	}
 	vars := varsFromLoginRequest(req)
+	access := &flareSolverrSiteAccess{tmpl: tmpl, browser: req.Browser, cred: req.Credential}
+	if err := access.Prepare(ctx, vars, req.Settings); err != nil {
+		return LoginCheckResult{}, err
+	}
 	if tmpl.Auth.Check != nil {
-		checkURL := render(tmpl.Auth.Check.URL, vars)
-		if strings.TrimSpace(checkURL) != "" {
-			success := renderMatchRules(tmpl.Auth.Check.Success, vars)
-			var dom []byte
-			var err error
-			if waiter, ok := req.Browser.(BrowserPageWaiter); ok {
-				dom, err = waiter.FetchPageWait(ctx, tmpl.Site, checkURL, req.Settings.Timeout, expectedURLNeedles(checkURL), requiredAllMarkers(success), requiredAnyMarkers(success), strings.TrimSpace(success.Regex))
-			} else {
-				dom, err = req.Browser.FetchPage(ctx, tmpl.Site, checkURL)
-			}
-			if err == nil {
-				page := decodeBody(dom, tmpl.Encoding.Response)
-				if matchSuccess(page, success) {
-					return LoginCheckResult{OK: true, Message: "Chromium-профиль авторизован на трекере.", LoginURL: loginURL}, nil
-				}
-			}
+		dom, err := access.request(ctx, *tmpl.Auth.Check, vars, req.Settings)
+		if err != nil {
+			return LoginCheckResult{}, fmt.Errorf("flaresolverr login check: %w", err)
+		}
+		page := decodeBody(dom, tmpl.Encoding.Response)
+		success := renderMatchRules(tmpl.Auth.Check.Success, vars)
+		if !matchSuccess(page, success) {
+			return LoginCheckResult{}, errors.New("FlareSolverr session is not authorized on tracker")
 		}
 	}
-	if req.OpenBrowser {
-		return LoginCheckResult{OK: false, Message: "Открой интерактивную Chromium-сессию и пройди Cloudflare/CAPTCHA/login вручную.", LoginURL: loginURL}, nil
-	}
-	return LoginCheckResult{OK: false, Message: "Chromium-профиль пока не авторизован. Нажми «Проверить логин» с открытием браузера и пройди Cloudflare/CAPTCHA/login вручную.", LoginURL: loginURL}, nil
+	return LoginCheckResult{
+		OK:       true,
+		Message:  "FlareSolverr-сессия авторизована на трекере.",
+		LoginURL: browserLoginURL(tmpl),
+	}, nil
 }
 
 func renderedHeaders(headers map[string]string, vars map[string]string) map[string]string {

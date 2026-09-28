@@ -1,0 +1,31 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+      - name: Install SQLite headers
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Format check
+        run: |
+          files="$(gofmt -l $(find . -name '*.go' -type f))"
+          if [ -n "$files" ]; then
+            echo "Files requiring gofmt:"
+            echo "$files"
+            gofmt -d $files
+            exit 1
+          fi
+      - name: Check UI JavaScript
+        run: node --check ui/assets/app.js
+      - name: Test
+        run: go test ./...

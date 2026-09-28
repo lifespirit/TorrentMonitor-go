@@ -336,7 +336,7 @@ function renderCredential(c) {
           <span>Режим доступа</span>
           <select data-field="access_mode">
             ${option("native", "Native HTTP", accessMode)}
-            ${option("chromium", "Chromium", accessMode)}
+            ${option("flaresolverr", "FlareSolverr", accessMode)}
           </select>
         </label>
         <label>
@@ -356,7 +356,7 @@ function renderCredential(c) {
           <span>Использовать proxy из настроек для этого трекера</span>
         </label>
         <div class="form-field form-field--wide c-muted">
-          Native использует HTTP-запросы и может сохранять session cookie внутри базы. Chromium открывает реальный браузерный профиль для ручного прохождения CAPTCHA/Cloudflare. Proxy-переключатель трекера принудительно включает proxy из общих настроек для Native HTTP-запросов этого трекера.
+          Native использует обычные HTTP-запросы и сохраняет session cookie в базе. FlareSolverr автоматически проходит Cloudflare/JavaScript challenge и держит отдельную браузерную сессию для каждого трекера. Proxy-переключатель трекера применяется и к FlareSolverr-сессии, и к последующей загрузке .torrent.
         </div>
       </div>
       <div class="credential-footer">
@@ -389,20 +389,15 @@ async function checkCredentialLogin(id) {
   const mode = card.querySelector('[data-field="access_mode"]').value
   const btn = card.querySelector(`[data-check-credential="${cssEscape(id)}"]`)
   btn.disabled = true
-  btn.textContent = mode === "chromium" ? "Открываю…" : "Проверяю…"
+  btn.textContent = "Проверяю…"
   try {
     const result = await api(`/api/v1/credentials/${id}/check-login`, {
       method: "POST",
-      body: JSON.stringify({open_browser: mode === "chromium", access_mode: mode}),
+      body: JSON.stringify({open_browser: false, access_mode: mode}),
     })
     const extra = []
     if (result.login_url) extra.push(`URL: ${result.login_url}`)
-    if (result.profile_path) extra.push(`Профиль: ${result.profile_path}`)
-    if (result.viewer_url) extra.push(`Viewer: ${location.origin}${result.viewer_url}`)
 	showToast([result.message || "Проверка завершена.", ...extra].join("\n"), "success", 7000)
-    if (result.viewer_url) {
-      window.open(result.viewer_url, "tm-browser-" + (result.browser_session_id || id), "noopener,noreferrer")
-    }
   } catch (err) {
     await loadBootstrap()
 	showToast(err.message, "error", 8000)
@@ -419,13 +414,7 @@ async function loadSettings() {
   pageContent().innerHTML = renderSettings(state.settings)
   $("#settings-form").addEventListener("submit", saveSettings)
   $("#torrent-client-check").addEventListener("click", checkTorrentClientConnection)
-  $("#browser-extensions")?.addEventListener("click", openBrowserExtensions)
   $("#telegram-check")?.addEventListener("click", checkTelegramNotification)
-  const browserMode = $("#set-browser-mode")
-  if (browserMode) {
-    browserMode.addEventListener("change", updateBrowserSettingsVisibility)
-    updateBrowserSettingsVisibility()
-  }
 	$("#set-auth")?.addEventListener("change", updateAuthSettingsVisibility)
 	$("#set-notification-method")?.addEventListener("change", updateNotificationSettingsVisibility)
 	$("#set-ui-theme")?.addEventListener("change", (event) => {
@@ -434,26 +423,6 @@ async function loadSettings() {
 	})
 	updateAuthSettingsVisibility()
 	updateNotificationSettingsVisibility()
-}
-
-async function openBrowserExtensions() {
-  const btn = $("#browser-extensions")
-  btn.disabled = true
-  btn.textContent = "Открываю…"
-  try {
-    const result = await api("/api/v1/browser/sessions", {
-      method: "POST",
-      body: JSON.stringify({tracker: "torrentmonitor-extensions", url: "chrome://extensions/"}),
-    })
-    if (!result.viewer_url) throw new Error("Chromium не вернул адрес окна")
-    window.open(result.viewer_url, "tm-browser-extensions", "noopener,noreferrer")
-    showToast("Открыта страница расширений сервисного Chromium", "success")
-  } catch (err) {
-    showToast(err.message, "error", 8000)
-  } finally {
-    btn.disabled = false
-    btn.textContent = "Расширения Chromium"
-  }
 }
 
 async function loadTemplates() {
@@ -484,7 +453,7 @@ function renderSettings(s) {
 			<input id="set-admin-password" type="password" value="" placeholder="${s.auth_password_set ? "оставить пустым, чтобы не менять" : "задайте пароль"}" ${s.auth ? "" : "disabled"}>
           </label>
           <div class="form-field c-muted">Пароль: ${s.auth_password_set ? "задан" : "не задан; авторизация не активна"}</div>
-          ${renderCheck("set-debug", "Отладка Chromium", s.debug)}
+          ${renderCheck("set-debug", "Отладка FlareSolverr", s.debug)}
           ${renderCheck("set-auto-update", "Автообновление системы", s.auto_update)}
           <label class="form-field">
             <span>HTTP timeout, сек</span>
@@ -525,37 +494,7 @@ function renderSettings(s) {
       </div>
 
 
-      <div class="card settings-section">
-        <div class="card-title">Chromium</div>
-        <div class="settings-grid">
-          <label class="form-field">
-            <span>Режим браузера</span>
-            <select id="set-browser-mode">
-              ${option("embedded", "Встроенный Chromium", s.browser_mode || "embedded")}
-              ${option("external", "Внешний Chromium", s.browser_mode || "embedded")}
-            </select>
-          </label>
-          <label class="form-field form-field--wide" data-browser-field="embedded">
-            <span>Путь к Chromium</span>
-            <input id="set-browser-binary" type="text" value="${escapeAttr(s.browser_binary || "")}" placeholder="/usr/bin/chromium">
-          </label>
-          <label class="form-field form-field--wide" data-browser-field="embedded">
-            <span>Профиль Chromium</span>
-            <input id="set-browser-profile" type="text" value="${escapeAttr(s.browser_profile || "")}" placeholder="~/.local/share/torrentmonitor-go/browser/torrentmonitor">
-          </label>
-          <label class="form-field form-field--wide" data-browser-field="external">
-            <span>Адрес CDP внешнего Chromium</span>
-            <input id="set-browser-connect-url" type="text" value="${escapeAttr(s.browser_connect_url || "")}" placeholder="http://127.0.0.1:9222 или ws://127.0.0.1:9222/devtools/browser/...">
-          </label>
-        </div>
-        <div class="settings-actions settings-actions--test">
-          <button id="browser-extensions" class="btn" type="button">Расширения Chromium</button>
-          <span class="c-muted">Открывает общий профиль сервисного браузера. Установленные расширения будут доступны всем Chromium-проверкам.</span>
-        </div>
-        <div class="c-muted small-note">Для внешнего режима запусти Chromium самостоятельно с <code>--remote-debugging-port=9222</code>. TorrentMonitor будет только подключаться и создавать вкладки.</div>
-      </div>
-
-      <div class="card settings-section">
+      <div class="card settings-section">\n        <div class="card-title">FlareSolverr</div>\n        <div class="settings-grid">\n          <label class="form-field form-field--wide">\n            <span>URL API FlareSolverr</span>\n            <input id="set-flaresolverr-url" type="text" value="${escapeAttr(s.flaresolverr_url || "http://127.0.0.1:8191/v1")}" placeholder="http://127.0.0.1:8191/v1">\n          </label>\n        </div>\n        <div class="c-muted small-note">TorrentMonitor создаёт постоянную FlareSolverr-сессию на каждый трекер. Challenge и form-login выполняются через FlareSolverr; бинарный .torrent скачивается напрямую с выданными cookies и User-Agent.</div>\n      </div>\n\n      <div class="card settings-section">
         <div class="card-title">Torrent-клиент</div>
         <div class="settings-grid">
           ${renderCheck("set-use-torrent", "Добавлять в torrent-клиент", s.use_torrent)}
@@ -738,16 +677,6 @@ function shortPath(value) {
   return "…" + text.slice(-47)
 }
 
-function updateBrowserSettingsVisibility() {
-  const modeEl = $("#set-browser-mode")
-  if (!modeEl) return
-  const mode = modeEl.value || "embedded"
-  document.querySelectorAll("[data-browser-field]").forEach(el => {
-    const show = el.getAttribute("data-browser-field") === mode
-    el.hidden = !show
-  })
-}
-
 function updateAuthSettingsVisibility() {
 	const enabled = $("#set-auth")?.checked ?? false
 	const password = $("#set-admin-password")
@@ -785,10 +714,7 @@ async function saveSettings(e) {
     http_timeout_seconds: Number($("#set-http-timeout").value || 15),
     monitor_interval_minutes: Number($("#set-monitor-interval").value || 15),
     post_update_script: $("#set-post-update-script").value,
-    browser_mode: $("#set-browser-mode").value,
-    browser_binary: $("#set-browser-binary").value,
-    browser_profile: $("#set-browser-profile").value,
-    browser_connect_url: $("#set-browser-connect-url").value,
+    flaresolverr_url: $("#set-flaresolverr-url").value,
     user_agent: $("#set-user-agent").value,
     proxy: $("#set-proxy").checked,
     proxy_type: $("#set-proxy-type").value,

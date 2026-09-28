@@ -790,10 +790,7 @@ func kvFromSettings(settings core.Settings) map[string]string {
 		"http_timeout_seconds":             strconv.Itoa(settings.HTTPTimeoutSeconds),
 		"monitor_interval_minutes":         strconv.Itoa(settings.MonitorIntervalMinutes),
 		"post_update_script":               settings.PostUpdateScript,
-		"browser_mode":                     core.NormalizeBrowserMode(settings.BrowserMode),
-		"browser_binary":                   settings.BrowserBinary,
-		"browser_profile":                  settings.BrowserProfile,
-		"browser_connect_url":              settings.BrowserConnectURL,
+		"flaresolverr_url":                 settings.FlareSolverrURL,
 		"template_source_url":              settings.TemplateSourceURL,
 		"template_update_interval_minutes": strconv.Itoa(settings.TemplateUpdateIntervalMinutes),
 		"template_directory":               settings.TemplateDirectory,
@@ -899,17 +896,8 @@ func settingsFromKV(values map[string]string) core.Settings {
 	if v, ok := values["post_update_script"]; ok {
 		settings.PostUpdateScript = v
 	}
-	if v, ok := values["browser_mode"]; ok {
-		settings.BrowserMode = core.NormalizeBrowserMode(v)
-	}
-	if v, ok := values["browser_binary"]; ok {
-		settings.BrowserBinary = v
-	}
-	if v, ok := values["browser_profile"]; ok {
-		settings.BrowserProfile = v
-	}
-	if v, ok := values["browser_connect_url"]; ok {
-		settings.BrowserConnectURL = v
+	if v, ok := values["flaresolverr_url"]; ok {
+		settings.FlareSolverrURL = v
 	}
 	if v, ok := values["template_source_url"]; ok {
 		settings.TemplateSourceURL = v

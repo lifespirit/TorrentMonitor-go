@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"torrentmonitor-go/internal/browserbroker"
+	"torrentmonitor-go/internal/flaresolverr"
 )
 
 type TorrentKind string
@@ -27,8 +27,9 @@ const (
 )
 
 const (
-	AccessModeNative   AccessMode = "native"
-	AccessModeChromium AccessMode = "chromium"
+	AccessModeNative       AccessMode = "native"
+	AccessModeFlareSolverr AccessMode = "flaresolverr"
+	AccessModeChromium     AccessMode = "chromium" // legacy alias accepted by NormalizeAccessMode
 )
 
 type TorrentItem struct {
@@ -250,10 +251,7 @@ type Settings struct {
 	HTTPTimeoutSeconds            int        `json:"http_timeout_seconds"`
 	MonitorIntervalMinutes        int        `json:"monitor_interval_minutes"`
 	PostUpdateScript              string     `json:"post_update_script"`
-	BrowserMode                   string     `json:"browser_mode"`
-	BrowserBinary                 string     `json:"browser_binary"`
-	BrowserProfile                string     `json:"browser_profile"`
-	BrowserConnectURL             string     `json:"browser_connect_url"`
+	FlareSolverrURL               string     `json:"flaresolverr_url"`
 	TemplateSourceURL             string     `json:"template_source_url"`
 	TemplateUpdateIntervalMinutes int        `json:"template_update_interval_minutes"`
 	TemplateDirectory             string     `json:"template_directory"`
@@ -290,10 +288,7 @@ type UpdateSettingsRequest struct {
 	HTTPTimeoutSeconds            *int    `json:"http_timeout_seconds"`
 	MonitorIntervalMinutes        *int    `json:"monitor_interval_minutes"`
 	PostUpdateScript              *string `json:"post_update_script"`
-	BrowserMode                   *string `json:"browser_mode"`
-	BrowserBinary                 *string `json:"browser_binary"`
-	BrowserProfile                *string `json:"browser_profile"`
-	BrowserConnectURL             *string `json:"browser_connect_url"`
+	FlareSolverrURL               *string `json:"flaresolverr_url"`
 	TemplateSourceURL             *string `json:"template_source_url"`
 	TemplateUpdateIntervalMinutes *int    `json:"template_update_interval_minutes"`
 	TemplateDirectory             *string `json:"template_directory"`
@@ -301,46 +296,24 @@ type UpdateSettingsRequest struct {
 }
 
 func NormalizeAccessMode(mode string) AccessMode {
-	switch AccessMode(mode) {
-	case AccessModeChromium:
-		return AccessModeChromium
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case string(AccessModeFlareSolverr), string(AccessModeChromium), "browser":
+		return AccessModeFlareSolverr
 	default:
 		return AccessModeNative
 	}
 }
 
-const (
-	BrowserModeEmbedded = "embedded"
-	BrowserModeExternal = "external"
-)
-
-func NormalizeBrowserMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case BrowserModeExternal, "connect", "remote":
-		return BrowserModeExternal
-	default:
-		return BrowserModeEmbedded
+func FlareSolverrConfigFromSettings(settings Settings) flaresolverr.Config {
+	timeout := time.Duration(settings.HTTPTimeoutSeconds) * time.Second
+	if timeout < 60*time.Second {
+		timeout = 60 * time.Second
 	}
-}
-
-func defaultBrowserMode() string {
-	if strings.TrimSpace(os.Getenv("TM_BROWSER_CONNECT_URL")) != "" {
-		return BrowserModeExternal
+	return flaresolverr.Config{
+		URL:     strings.TrimSpace(settings.FlareSolverrURL),
+		Timeout: timeout,
+		Debug:   settings.Debug,
 	}
-	return BrowserModeEmbedded
-}
-
-func BrowserConfigFromSettings(settings Settings) browserbroker.Config {
-	mode := NormalizeBrowserMode(settings.BrowserMode)
-	cfg := browserbroker.Config{
-		Binary:      strings.TrimSpace(settings.BrowserBinary),
-		ProfilePath: strings.TrimSpace(settings.BrowserProfile),
-		Debug:       settings.Debug,
-	}
-	if mode == BrowserModeExternal {
-		cfg.ConnectURL = strings.TrimSpace(settings.BrowserConnectURL)
-	}
-	return cfg
 }
 
 func defaultTemplateDirectory() string {
@@ -354,6 +327,13 @@ func defaultTemplateDirectory() string {
 		return filepath.Join(home, ".local", "share", "torrentmonitor-go", "templates")
 	}
 	return filepath.Join(".", "templates")
+}
+
+func envStringDefault(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func envBoolDefault(key string, fallback bool) bool {
@@ -418,10 +398,7 @@ func DefaultSettings() Settings {
 		HTTPTimeoutSeconds:            15,
 		MonitorIntervalMinutes:        15,
 		PostUpdateScript:              "",
-		BrowserMode:                   defaultBrowserMode(),
-		BrowserBinary:                 strings.TrimSpace(os.Getenv("TM_BROWSER_BINARY")),
-		BrowserProfile:                strings.TrimSpace(os.Getenv("TM_BROWSER_PROFILE")),
-		BrowserConnectURL:             strings.TrimSpace(os.Getenv("TM_BROWSER_CONNECT_URL")),
+		FlareSolverrURL:               envStringDefault("TM_FLARESOLVERR_URL", "http://127.0.0.1:8191/v1"),
 		TemplateSourceURL:             strings.TrimSpace(os.Getenv("TM_TEMPLATE_SOURCE_URL")),
 		TemplateUpdateIntervalMinutes: envIntDefault("TM_TEMPLATE_UPDATE_INTERVAL_MINUTES", 1440),
 		TemplateDirectory:             defaultTemplateDirectory(),
@@ -536,18 +513,10 @@ func ApplySettingsPatch(s Settings, patch UpdateSettingsRequest) Settings {
 	if patch.PostUpdateScript != nil {
 		s.PostUpdateScript = *patch.PostUpdateScript
 	}
-	if patch.BrowserMode != nil {
-		s.BrowserMode = NormalizeBrowserMode(*patch.BrowserMode)
+	if patch.FlareSolverrURL != nil {
+		s.FlareSolverrURL = strings.TrimSpace(*patch.FlareSolverrURL)
 	}
-	if patch.BrowserBinary != nil {
-		s.BrowserBinary = strings.TrimSpace(*patch.BrowserBinary)
-	}
-	if patch.BrowserProfile != nil {
-		s.BrowserProfile = strings.TrimSpace(*patch.BrowserProfile)
-	}
-	if patch.BrowserConnectURL != nil {
-		s.BrowserConnectURL = strings.TrimSpace(*patch.BrowserConnectURL)
-	}
+
 	if patch.TemplateSourceURL != nil {
 		s.TemplateSourceURL = strings.TrimSpace(*patch.TemplateSourceURL)
 	}
