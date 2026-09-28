@@ -354,7 +354,7 @@ func TestFlareSolverrPrepareSolvesTurnstileBeforeLogin(t *testing.T) {
 				Captcha: &CaptchaConfig{
 					Type:           "turnstile",
 					URL:            "https://nnm.test/login",
-					TabsTillVerify: 35,
+					TabsTillVerify: 36,
 					FormField:      "cf-turnstile-response",
 				},
 			},
@@ -372,8 +372,8 @@ func TestFlareSolverrPrepareSolvesTurnstileBeforeLogin(t *testing.T) {
 	if err := access.Prepare(context.Background(), vars, Settings{Timeout: 5 * time.Second}); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	if solver.tabs != 35 {
-		t.Fatalf("tabs_till_verify = %d, want 35", solver.tabs)
+	if solver.tabs != 36 {
+		t.Fatalf("tabs_till_verify = %d, want 36", solver.tabs)
 	}
 	if solver.captchaURL != "https://nnm.test/login" {
 		t.Fatalf("captcha URL = %q", solver.captchaURL)
@@ -406,7 +406,7 @@ func TestDefaultNNMClubTemplateConfiguresTurnstileLogin(t *testing.T) {
 	if tmpl.Auth.Login.Captcha.URL != "https://nnmclub.to/forum/login.php" {
 		t.Fatalf("captcha URL = %q", tmpl.Auth.Login.Captcha.URL)
 	}
-	if tmpl.Auth.Login.Captcha.TabsTillVerify != 35 {
+	if tmpl.Auth.Login.Captcha.TabsTillVerify != 36 {
 		t.Fatalf("tabs_till_verify = %d", tmpl.Auth.Login.Captcha.TabsTillVerify)
 	}
 	if tmpl.Auth.Login.Captcha.FormField != "cf-turnstile-response" {
