@@ -36,10 +36,7 @@ func TestRunnerHTTPTemplateFindsUpdateAndDownloadsTorrent(t *testing.T) {
 		Site:    "example.test",
 		Kind:    "forum",
 		Mode:    ModeHTTP,
-		Auth: Auth{
-			LoggedOut: MatchRules{ContainsAll: []string{"login_username", "login_password"}},
-			Login:     &HTTPRequest{Method: "POST", URL: srv.URL + "/login", Form: map[string]string{"u": "{{ credentials.login }}", "p": "{{ credentials.password }}"}},
-		},
+		Auth:    Auth{Login: &HTTPRequest{Method: "POST", URL: srv.URL + "/login", Form: map[string]string{"u": "{{ credentials.login }}", "p": "{{ credentials.password }}"}}},
 		Item: ItemFlow{
 			Page: HTTPRequest{Method: "GET", URL: srv.URL + "/topic?id={{ item.torrent_id }}"},
 			Extract: map[string]Extract{
@@ -269,7 +266,10 @@ func TestRunnerLegacyChromiumModeUsesFlareSolverrAndPerformsLogin(t *testing.T) 
 		Site:    "flaresolverr.test",
 		Kind:    "forum",
 		Mode:    ModeHTTP,
-		Auth:    Auth{Login: &HTTPRequest{Method: "POST", URL: srv.URL + "/login", Form: map[string]string{"u": "{{ credentials.login }}", "p": "{{ credentials.password }}"}}},
+		Auth: Auth{
+			LoggedOut: MatchRules{ContainsAll: []string{"login_username", "login_password"}},
+			Login:     &HTTPRequest{Method: "POST", URL: srv.URL + "/login", Form: map[string]string{"u": "{{ credentials.login }}", "p": "{{ credentials.password }}"}},
+		},
 		Item: ItemFlow{
 			Page: HTTPRequest{Method: "GET", URL: "https://flaresolverr.test/topic?id={{ item.torrent_id }}"},
 			Extract: map[string]Extract{
