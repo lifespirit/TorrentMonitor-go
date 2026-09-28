@@ -201,7 +201,6 @@ func TestClientSolvesTurnstileAndReusesSession(t *testing.T) {
 	}
 }
 
-
 func TestClientRetriesChallengeTimeoutInSameSession(t *testing.T) {
 	var (
 		mu          sync.Mutex
