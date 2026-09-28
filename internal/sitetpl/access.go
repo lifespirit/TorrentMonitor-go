@@ -24,11 +24,11 @@ type siteAccess interface {
 
 func (r *Runner) newSiteAccess(tmpl Template, client *http.Client, cred Credential, browser BrowserPageFetcher) (siteAccess, error) {
 	switch normalizeAccessMode(cred.AccessMode) {
-	case "chromium":
+	case "flaresolverr":
 		if browser == nil {
-			return nil, errors.New("chromium access mode requires BrowserBroker")
+			return nil, errors.New("flaresolverr access mode requires FlareSolverr")
 		}
-		return &chromiumSiteAccess{tmpl: tmpl, browser: browser}, nil
+		return &flareSolverrSiteAccess{tmpl: tmpl, browser: browser, cred: cred}, nil
 	case "native":
 		fallthrough
 	default:
@@ -38,8 +38,8 @@ func (r *Runner) newSiteAccess(tmpl Template, client *http.Client, cred Credenti
 
 func normalizeAccessMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "chromium", "browser":
-		return "chromium"
+	case "flaresolverr", "chromium", "browser":
+		return "flaresolverr"
 	default:
 		return "native"
 	}
@@ -90,39 +90,46 @@ func (a *nativeSiteAccess) SessionCookie() string {
 	return cookieHeaderForTemplate(a.client, a.tmpl)
 }
 
-type chromiumSiteAccess struct {
+type flareSolverrSiteAccess struct {
 	tmpl    Template
 	browser BrowserPageFetcher
+	cred    Credential
 }
 
-func (a *chromiumSiteAccess) Prepare(ctx context.Context, vars map[string]string, settings Settings) error {
+func (a *flareSolverrSiteAccess) Prepare(ctx context.Context, vars map[string]string, settings Settings) error {
 	if a.browser == nil {
-		return errors.New("chromium access mode requires BrowserBroker")
+		return errors.New("flaresolverr access mode requires FlareSolverr")
+	}
+	var checkErr error
+	if a.tmpl.Auth.Check != nil {
+		if _, err := a.request(ctx, *a.tmpl.Auth.Check, vars, settings); err == nil {
+			return nil
+		} else {
+			checkErr = err
+		}
+	}
+	if a.tmpl.Auth.Login == nil {
+		if checkErr != nil {
+			return fmt.Errorf("flaresolverr auth check: %w", checkErr)
+		}
+		return nil
+	}
+	if strings.TrimSpace(a.cred.Login) == "" || strings.TrimSpace(a.cred.Password) == "" {
+		return errors.New("login and password are required for FlareSolverr mode")
+	}
+	if _, err := a.request(ctx, *a.tmpl.Auth.Login, vars, settings); err != nil {
+		return fmt.Errorf("flaresolverr login: %w", err)
+	}
+	if a.tmpl.Auth.Check != nil {
+		if _, err := a.request(ctx, *a.tmpl.Auth.Check, vars, settings); err != nil {
+			return fmt.Errorf("flaresolverr login check: %w", err)
+		}
 	}
 	return nil
 }
 
-func (a *chromiumSiteAccess) FetchPage(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
-	if a.browser == nil {
-		return nil, errors.New("chromium access mode requires BrowserBroker")
-	}
-	rawURL := render(spec.URL, vars)
-	if strings.TrimSpace(rawURL) == "" {
-		return nil, errors.New("browser page URL is empty")
-	}
-	if !requestCanUseBrowser(spec, rawURL) {
-		return nil, fmt.Errorf("chromium page fetch supports browser-loadable GET URLs only: method=%q url=%q", spec.Method, rawURL)
-	}
-	var (
-		data []byte
-		err  error
-	)
-	if waiter, ok := a.browser.(BrowserPageWaiter); ok {
-		success := renderMatchRules(spec.Success, vars)
-		data, err = waiter.FetchPageWait(ctx, a.tmpl.Site, rawURL, settings.Timeout, expectedURLNeedles(rawURL), requiredAllMarkers(success), requiredAnyMarkers(success), strings.TrimSpace(success.Regex))
-	} else {
-		data, err = a.browser.FetchPage(ctx, a.tmpl.Site, rawURL)
-	}
+func (a *flareSolverrSiteAccess) FetchPage(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
+	data, err := a.request(ctx, spec, vars, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -132,22 +139,82 @@ func (a *chromiumSiteAccess) FetchPage(ctx context.Context, spec HTTPRequest, va
 	return data, nil
 }
 
-func (a *chromiumSiteAccess) DownloadTorrent(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
+func (a *flareSolverrSiteAccess) request(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
 	if a.browser == nil {
-		return nil, errors.New("chromium access mode requires BrowserBroker")
+		return nil, errors.New("flaresolverr access mode requires FlareSolverr")
 	}
-	downloader, ok := a.browser.(BrowserDownloader)
-	if !ok {
-		return nil, errors.New("chromium access mode requires BrowserBroker download support")
+	method := strings.ToUpper(strings.TrimSpace(spec.Method))
+	if method == "" {
+		method = http.MethodGet
 	}
 	rawURL := render(spec.URL, vars)
 	if strings.TrimSpace(rawURL) == "" {
-		return nil, errors.New("browser download URL is empty")
+		return nil, errors.New("FlareSolverr request URL is empty")
 	}
-	return downloader.Download(ctx, a.tmpl.Site, rawURL, renderedHeaders(spec.Headers, vars), renderedCookieHeader(spec.Cookies, vars))
+	proxyType, proxyAddress := a.proxy(settings)
+	cookies := make(map[string]string, len(spec.Cookies)+4)
+	for _, cookie := range parseCookieHeader(a.cred.Cookie) {
+		if cookie != nil && strings.TrimSpace(cookie.Name) != "" {
+			cookies[cookie.Name] = cookie.Value
+		}
+	}
+	for k, v := range spec.Cookies {
+		if strings.TrimSpace(k) != "" {
+			cookies[k] = render(v, vars)
+		}
+	}
+	postData := ""
+	if len(spec.Form) > 0 {
+		postData = encodeForm(spec.Form, vars, spec.FormEncoding)
+	}
+	if requester, ok := a.browser.(BrowserRequester); ok {
+		data, err := requester.Request(ctx, a.tmpl.Site, method, rawURL, postData, cookies, settings.Timeout, proxyType, proxyAddress)
+		if err != nil {
+			return nil, err
+		}
+		success := renderMatchRules(spec.Success, vars)
+		if !matchSuccess(string(data), success) {
+			return nil, fmt.Errorf("success markers were not found in %s", rawURL)
+		}
+		return data, nil
+	}
+	if method != http.MethodGet || len(spec.Form) > 0 {
+		return nil, errors.New("configured browser backend does not support FlareSolverr form requests")
+	}
+	if !requestCanUseBrowser(spec, rawURL) {
+		return nil, fmt.Errorf("FlareSolverr page fetch supports browser-loadable GET URLs only: method=%q url=%q", spec.Method, rawURL)
+	}
+	if waiter, ok := a.browser.(BrowserPageWaiter); ok {
+		success := renderMatchRules(spec.Success, vars)
+		return waiter.FetchPageWait(ctx, a.tmpl.Site, rawURL, settings.Timeout, expectedURLNeedles(rawURL), requiredAllMarkers(success), requiredAnyMarkers(success), strings.TrimSpace(success.Regex))
+	}
+	return a.browser.FetchPage(ctx, a.tmpl.Site, rawURL)
 }
 
-func (a *chromiumSiteAccess) SessionCookie() string { return "" }
+func (a *flareSolverrSiteAccess) DownloadTorrent(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
+	if a.browser == nil {
+		return nil, errors.New("flaresolverr access mode requires FlareSolverr")
+	}
+	downloader, ok := a.browser.(BrowserDownloader)
+	if !ok {
+		return nil, errors.New("flaresolverr access mode requires download support")
+	}
+	rawURL := render(spec.URL, vars)
+	if strings.TrimSpace(rawURL) == "" {
+		return nil, errors.New("flaresolverr download URL is empty")
+	}
+	proxyType, proxyAddress := a.proxy(settings)
+	return downloader.Download(ctx, a.tmpl.Site, rawURL, renderedHeaders(spec.Headers, vars), renderedCookieHeader(spec.Cookies, vars), settings.Timeout, proxyType, proxyAddress)
+}
+
+func (a *flareSolverrSiteAccess) proxy(settings Settings) (string, string) {
+	if settings.ProxyEnabled || a.cred.UseProxy {
+		return settings.ProxyType, settings.ProxyAddress
+	}
+	return "", ""
+}
+
+func (a *flareSolverrSiteAccess) SessionCookie() string { return "" }
 
 func cloneClientWithTimeout(client *http.Client, settings Settings) *http.Client {
 	if settings.Timeout <= 0 || client.Timeout == settings.Timeout {

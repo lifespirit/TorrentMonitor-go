@@ -79,7 +79,7 @@ func TestSQLiteStoreListsCredentialAccessMode(t *testing.T) {
 	if rutID == 0 {
 		t.Fatalf("default rutracker credential not found")
 	}
-	mode := "chromium"
+	mode := "flaresolverr"
 	if _, err := s.UpdateCredential(ctx, rutID, core.UpdateCredentialRequest{AccessMode: &mode}); err != nil {
 		t.Fatalf("UpdateCredential: %v", err)
 	}
@@ -89,8 +89,8 @@ func TestSQLiteStoreListsCredentialAccessMode(t *testing.T) {
 	}
 	for _, c := range creds {
 		if c.ID == rutID {
-			if c.AccessMode != core.AccessModeChromium {
-				t.Fatalf("AccessMode = %q, want chromium; credential = %+v", c.AccessMode, c)
+			if c.AccessMode != core.AccessModeFlareSolverr {
+				t.Fatalf("AccessMode = %q, want flaresolverr; credential = %+v", c.AccessMode, c)
 			}
 			if c.Type != core.TrackerTypeForum {
 				t.Fatalf("Type = %q, want forum; credential = %+v", c.Type, c)

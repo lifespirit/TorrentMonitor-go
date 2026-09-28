@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"torrentmonitor-go/internal/browserbroker"
+	"torrentmonitor-go/internal/flaresolverr"
 	"torrentmonitor-go/internal/notify"
 	"torrentmonitor-go/internal/sitetpl"
 	"torrentmonitor-go/internal/torrentclient"
@@ -49,29 +49,36 @@ type Repository interface {
 }
 
 type Service struct {
-	repo    Repository
-	logger  *slog.Logger
-	runner  *sitetpl.Runner
-	browser *browserbroker.Broker
-	addMu   sync.Mutex
+	repo   Repository
+	logger *slog.Logger
+	runner *sitetpl.Runner
+	solver *flaresolverr.Client
+	addMu  sync.Mutex
 }
 
 func NewService(repo Repository, logger *slog.Logger) *Service {
-	return &Service{repo: repo, logger: logger, runner: sitetpl.NewRunner()}
+	return &Service{repo: repo, logger: serviceLogger(logger), runner: sitetpl.NewRunner()}
 }
 
 func NewServiceWithRunner(repo Repository, logger *slog.Logger, runner *sitetpl.Runner) *Service {
 	if runner == nil {
 		runner = sitetpl.NewRunner()
 	}
-	return &Service{repo: repo, logger: logger, runner: runner}
+	return &Service{repo: repo, logger: serviceLogger(logger), runner: runner}
 }
 
-func NewServiceWithBrowser(repo Repository, logger *slog.Logger, runner *sitetpl.Runner, browser *browserbroker.Broker) *Service {
+func NewServiceWithSolver(repo Repository, logger *slog.Logger, runner *sitetpl.Runner, solver *flaresolverr.Client) *Service {
 	if runner == nil {
 		runner = sitetpl.NewRunner()
 	}
-	return &Service{repo: repo, logger: logger, runner: runner, browser: browser}
+	return &Service{repo: repo, logger: serviceLogger(logger), runner: runner, solver: solver}
+}
+
+func serviceLogger(logger *slog.Logger) *slog.Logger {
+	if logger == nil {
+		return slog.Default()
+	}
+	return logger
 }
 
 func (s *Service) Bootstrap(ctx context.Context, authenticated bool) (Bootstrap, error) {
@@ -222,6 +229,8 @@ func (s *Service) listTemplateCredentials(ctx context.Context) ([]Credential, er
 		}
 		if c.AccessMode == "" {
 			c.AccessMode = allowed[tracker].AccessMode
+		} else {
+			c.AccessMode = NormalizeAccessMode(string(c.AccessMode))
 		}
 		c.Necessarily = allowed[tracker].Necessarily
 		byTracker[tracker] = c
@@ -303,28 +312,8 @@ func (s *Service) CheckCredentialLogin(ctx context.Context, id int64, req Creden
 			ProxyType:    settings.ProxyType,
 			ProxyAddress: settings.ProxyAddress,
 		},
-		OpenBrowser: req.OpenBrowser,
-		Browser:     s.browser,
-	}
-	if mode == AccessModeChromium && req.OpenBrowser && s.browser != nil {
-		target, err := s.runner.BrowserLoginTarget(cred.Tracker)
-		if err != nil {
-			return CredentialLoginCheckResult{}, err
-		}
-		br, err := s.browser.Open(ctx, browserbroker.OpenRequest{Tracker: cred.Tracker, URL: target.LoginURL, ProfilePath: target.ProfilePath})
-		if err != nil {
-			return CredentialLoginCheckResult{}, err
-		}
-		return CredentialLoginCheckResult{
-			OK:               false,
-			Tracker:          cred.Tracker,
-			Mode:             mode,
-			Message:          "Открыта серверная Chromium-сессия. Пройди Cloudflare/CAPTCHA/login в окне TorrentMonitor, затем нажми «Готово» и повтори проверку.",
-			LoginURL:         target.LoginURL,
-			ProfilePath:      br.ProfilePath,
-			BrowserSessionID: br.ID,
-			ViewerURL:        br.ViewerURL,
-		}, nil
+		OpenBrowser: false,
+		Browser:     s.solver,
 	}
 	result, err := s.runner.CheckLogin(ctx, loginReq)
 	if err != nil {
@@ -369,8 +358,8 @@ func (s *Service) UpdateSettings(ctx context.Context, patch UpdateSettingsReques
 	if err != nil {
 		return Settings{}, err
 	}
-	if s.browser != nil {
-		s.browser.UpdateConfig(BrowserConfigFromSettings(settings))
+	if s.solver != nil {
+		s.solver.UpdateConfig(FlareSolverrConfigFromSettings(settings))
 	}
 	if strings.TrimSpace(oldSettings.TemplateDirectory) != strings.TrimSpace(settings.TemplateDirectory) {
 		if _, loadErr := s.ReloadTemplatesFromSettings(ctx); loadErr != nil {
@@ -600,25 +589,14 @@ func (s *Service) RunMonitorOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	blocked, blockErr := s.blockedTrackers(ctx)
-	if blockErr != nil {
-		s.logger.Warn("failed to load tracker warning blocks", "error", blockErr)
-	}
 	s.logger.Info("monitor cycle started", "items", len(items))
 	for _, item := range items {
 		if item.Paused || item.Type != TrackerTypeForum {
 			continue
 		}
-		if blocked[strings.ToLower(item.Tracker)] {
-			s.logger.Info("tracker is paused by unresolved interactive warning", "tracker", item.Tracker, "id", item.ID)
-			continue
-		}
 		result, err := s.CheckTorrent(ctx, item.ID)
 		if err != nil {
 			s.logger.Warn("torrent check failed", "id", item.ID, "tracker", item.Tracker, "error", err)
-			if needsBrowserInteraction(err) != nil {
-				blocked[strings.ToLower(item.Tracker)] = true
-			}
 			continue
 		}
 		if result.Updated {
@@ -655,18 +633,8 @@ func (s *Service) CheckTorrent(ctx context.Context, id int64) (TorrentCheckResul
 	}
 	cred := findCredential(credentials, item.Tracker)
 	var browser sitetpl.BrowserPageFetcher
-	releaseBrowserSession := false
-	if cred.AccessMode == AccessModeChromium {
-		browser = s.browser
-		releaseBrowserSession = s.browser != nil
-		defer func() {
-			if !releaseBrowserSession {
-				return
-			}
-			if closeErr := s.browser.CloseTracker(item.Tracker); closeErr != nil && !errors.Is(closeErr, browserbroker.ErrSessionNotFound) {
-				s.logger.Warn("failed to close Chromium tracker page", "tracker", item.Tracker, "error", closeErr)
-			}
-		}()
+	if NormalizeAccessMode(string(cred.AccessMode)) == AccessModeFlareSolverr {
+		browser = s.solver
 	}
 	result, err := s.runner.Check(ctx, sitetpl.CheckRequest{
 		Item: sitetpl.Item{
@@ -687,11 +655,6 @@ func (s *Service) CheckTorrent(ctx context.Context, id int64) (TorrentCheckResul
 		Browser: browser,
 	})
 	if err != nil {
-		// An interactive challenge is the only reason to retain a live page.
-		// The user needs that exact target to finish CAPTCHA or authentication.
-		if needsBrowserInteraction(err) != nil {
-			releaseBrowserSession = false
-		}
 		s.handleTorrentCheckError(ctx, item, err)
 		return TorrentCheckResult{}, err
 	}
@@ -1095,46 +1058,11 @@ func (s *Service) handleTorrentCheckError(ctx context.Context, item TorrentItem,
 		TorrentID: &id,
 		Reason:    "Ошибка проверки темы: " + err.Error(),
 	}
-	if need := needsBrowserInteraction(err); need != nil {
-		warning.Reason = "Требуется интерактивная проверка трекера. Открой браузерную сессию, заверши Cloudflare/CAPTCHA/login и повтори проверку. Подробности: " + need.Error()
-		warning.ActionKind = "browser_session"
-		warning.ActionLabel = "Открыть браузер"
-		warning.ActionURL = need.ViewerURL
-	}
 	s.recordWarning(ctx, warning)
 	hasError := true
 	if _, saveErr := s.repo.UpdateTorrent(ctx, item.ID, UpdateTorrentRequest{HasError: &hasError}); saveErr != nil {
 		s.logger.Warn("failed to mark torrent as errored", "id", item.ID, "tracker", item.Tracker, "error", saveErr)
 	}
-}
-
-func (s *Service) blockedTrackers(ctx context.Context) (map[string]bool, error) {
-	warnings, err := s.repo.ListWarnings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	blocked := map[string]bool{}
-	for _, w := range warnings {
-		if w.ActionKind != "browser_session" {
-			continue
-		}
-		tracker := strings.ToLower(strings.TrimSpace(w.Tracker))
-		if tracker == "" {
-			tracker = strings.ToLower(strings.TrimSpace(w.Where))
-		}
-		if tracker != "" {
-			blocked[tracker] = true
-		}
-	}
-	return blocked, nil
-}
-
-func needsBrowserInteraction(err error) *browserbroker.NeedsInteractionError {
-	var need *browserbroker.NeedsInteractionError
-	if errors.As(err, &need) {
-		return need
-	}
-	return nil
 }
 
 func findCredential(credentials []Credential, tracker string) Credential {

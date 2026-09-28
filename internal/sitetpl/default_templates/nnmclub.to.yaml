@@ -11,7 +11,7 @@ domains:
   - nnm-club.ws
 
 defaults:
-  access_mode: chromium
+  access_mode: flaresolverr
   timezone: Europe/Moscow
   page_timeout_seconds: 30
 

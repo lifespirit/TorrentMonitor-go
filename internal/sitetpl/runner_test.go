@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -195,15 +194,7 @@ func TestEncodeFormWindows1251(t *testing.T) {
 	}
 }
 
-func TestRunnerNativeModeDoesNotFallbackToBrowserForForbiddenPage(t *testing.T) {
-	browser := t.TempDir() + "/fake-chromium"
-	if err := os.WriteFile(browser, []byte("#!/bin/sh\nprintf '%s' '<html><head><title>Browser Release :: Test</title></head><body><span>25-Июн-26 14:30</span></body></html>'\n"), 0o755); err != nil {
-		t.Fatalf("write fake browser: %v", err)
-	}
-	t.Setenv("TM_BROWSER_FALLBACK", "1")
-	t.Setenv("TM_BROWSER_BINARY", browser)
-	t.Setenv("TM_BROWSER_PROFILE", t.TempDir())
-
+func TestRunnerNativeModeDoesNotFallbackToFlareSolverrForForbiddenPage(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/topic", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -214,7 +205,7 @@ func TestRunnerNativeModeDoesNotFallbackToBrowserForForbiddenPage(t *testing.T) 
 	reg := &Registry{}
 	reg.Register(Template{
 		Version: 1,
-		Site:    "browser-fallback.test",
+		Site:    "native-no-fallback.test",
 		Kind:    "forum",
 		Mode:    ModeHTTP,
 		Item: ItemFlow{
@@ -227,7 +218,7 @@ func TestRunnerNativeModeDoesNotFallbackToBrowserForForbiddenPage(t *testing.T) 
 	})
 
 	_, err := NewRunner(WithRegistry(reg)).Check(context.Background(), CheckRequest{
-		Item:     Item{Tracker: "browser-fallback.test", TorrentID: "42", Name: "Old"},
+		Item:     Item{Tracker: "native-no-fallback.test", TorrentID: "42", Name: "Old"},
 		Settings: Settings{UserAgent: "tm-test", Timeout: 5 * time.Second},
 	})
 	if err == nil || !strings.Contains(err.Error(), "HTTP 403") {
@@ -235,17 +226,25 @@ func TestRunnerNativeModeDoesNotFallbackToBrowserForForbiddenPage(t *testing.T) 
 	}
 }
 
-type fakeBrowserFetcher struct {
+type fakeFlareSolverrFetcher struct {
 	calls []string
 	html  string
 }
 
-func (f *fakeBrowserFetcher) FetchPage(ctx context.Context, tracker string, rawURL string) ([]byte, error) {
-	f.calls = append(f.calls, tracker+" "+rawURL)
+func (f *fakeFlareSolverrFetcher) FetchPage(ctx context.Context, tracker string, rawURL string) ([]byte, error) {
+	f.calls = append(f.calls, "FETCH "+tracker+" "+rawURL)
 	return []byte(f.html), nil
 }
 
-func TestRunnerChromiumModeUsesBrowserFetcherAndSkipsNativeLogin(t *testing.T) {
+func (f *fakeFlareSolverrFetcher) Request(ctx context.Context, tracker, method, rawURL, postData string, cookies map[string]string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error) {
+	f.calls = append(f.calls, method+" "+tracker+" "+rawURL+" "+postData)
+	if method == http.MethodPost {
+		return []byte("login ok"), nil
+	}
+	return []byte(f.html), nil
+}
+
+func TestRunnerLegacyChromiumModeUsesFlareSolverrAndPerformsLogin(t *testing.T) {
 	loginCalled := false
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
@@ -258,12 +257,12 @@ func TestRunnerChromiumModeUsesBrowserFetcherAndSkipsNativeLogin(t *testing.T) {
 	reg := &Registry{}
 	reg.Register(Template{
 		Version: 1,
-		Site:    "chromium.test",
+		Site:    "flaresolverr.test",
 		Kind:    "forum",
 		Mode:    ModeHTTP,
-		Auth:    Auth{Login: &HTTPRequest{Method: "POST", URL: srv.URL + "/login", Form: map[string]string{"u": "{{ credentials.login }}"}}},
+		Auth:    Auth{Login: &HTTPRequest{Method: "POST", URL: srv.URL + "/login", Form: map[string]string{"u": "{{ credentials.login }}", "p": "{{ credentials.password }}"}}},
 		Item: ItemFlow{
-			Page: HTTPRequest{Method: "GET", URL: "https://chromium.test/topic?id={{ item.torrent_id }}"},
+			Page: HTTPRequest{Method: "GET", URL: "https://flaresolverr.test/topic?id={{ item.torrent_id }}"},
 			Extract: map[string]Extract{
 				"title":      {Selector: "title", Cleanup: []CleanupRule{{TrimSuffix: " :: Test"}}},
 				"updated_at": {Selector: "body", Regex: `([0-9]{2}-[А-Яа-я]{3}-[0-9]{2} [0-9]{2}:[0-9]{2})`, Layout: "02-Jan-06 15:04", Locale: "ru"},
@@ -272,23 +271,29 @@ func TestRunnerChromiumModeUsesBrowserFetcherAndSkipsNativeLogin(t *testing.T) {
 	})
 
 	old := time.Date(2026, 6, 24, 10, 0, 0, 0, time.Local)
-	browser := &fakeBrowserFetcher{html: `<html><head><title>Browser Release :: Test</title></head><body><span>25-Июн-26 14:30</span></body></html>`}
+	solver := &fakeFlareSolverrFetcher{html: `<html><head><title>FlareSolverr Release :: Test</title></head><body><span>25-Июн-26 14:30</span></body></html>`}
 	result, err := NewRunner(WithRegistry(reg)).Check(context.Background(), CheckRequest{
-		Item:       Item{Tracker: "chromium.test", TorrentID: "42", Name: "Old", UpdatedAt: &old},
-		Credential: Credential{Login: "user", AccessMode: "chromium"},
+		Item:       Item{Tracker: "flaresolverr.test", TorrentID: "42", Name: "Old", UpdatedAt: &old},
+		Credential: Credential{Login: "user", Password: "pass", AccessMode: "chromium"},
 		Settings:   Settings{UserAgent: "tm-test", Timeout: 5 * time.Second},
-		Browser:    browser,
+		Browser:    solver,
 	})
 	if err != nil {
 		t.Fatalf("Check returned error: %v", err)
 	}
 	if loginCalled {
-		t.Fatalf("native login was called in chromium mode")
+		t.Fatalf("native login endpoint was called in FlareSolverr mode")
 	}
-	if len(browser.calls) != 1 {
-		t.Fatalf("browser calls = %v, want one call", browser.calls)
+	if len(solver.calls) != 2 {
+		t.Fatalf("FlareSolverr calls = %v, want POST login + GET topic", solver.calls)
 	}
-	if !result.Updated || result.Title != "Browser Release" {
+	if !strings.HasPrefix(solver.calls[0], "POST ") || !strings.Contains(solver.calls[0], "u=user") || !strings.Contains(solver.calls[0], "p=pass") {
+		t.Fatalf("unexpected login call: %v", solver.calls)
+	}
+	if !strings.HasPrefix(solver.calls[1], "GET ") {
+		t.Fatalf("unexpected topic call: %v", solver.calls)
+	}
+	if !result.Updated || result.Title != "FlareSolverr Release" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }

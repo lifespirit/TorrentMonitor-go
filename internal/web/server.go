@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"torrentmonitor-go/internal/browserbroker"
 	"torrentmonitor-go/internal/core"
 	"torrentmonitor-go/internal/scheduler"
 	"torrentmonitor-go/ui"
@@ -47,15 +46,14 @@ type Server struct {
 	cfg       Config
 	core      Core
 	scheduler *scheduler.Scheduler
-	browser   *browserbroker.Broker
 	logger    *slog.Logger
 	mux       *http.ServeMux
 	sessionMu sync.Mutex
 	sessions  map[string]authSession
 }
 
-func NewServer(cfg Config, core Core, scheduler *scheduler.Scheduler, logger *slog.Logger, browser *browserbroker.Broker) *Server {
-	s := &Server{cfg: cfg, core: core, scheduler: scheduler, browser: browser, logger: logger, mux: http.NewServeMux(), sessions: map[string]authSession{}}
+func NewServer(cfg Config, core Core, scheduler *scheduler.Scheduler, logger *slog.Logger) *Server {
+	s := &Server{cfg: cfg, core: core, scheduler: scheduler, logger: logger, mux: http.NewServeMux(), sessions: map[string]authSession{}}
 	s.routes()
 	return s
 }
@@ -67,12 +65,6 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.index)
 	s.mux.HandleFunc("GET /assets/", s.assets)
-	s.mux.HandleFunc("GET /browser/session/", s.browserSessionPage)
-	s.mux.HandleFunc("GET /api/v1/browser/sessions", s.apiBrowserSessions)
-	s.mux.HandleFunc("POST /api/v1/browser/sessions", s.apiBrowserSessions)
-	s.mux.HandleFunc("GET /api/v1/browser/sessions/", s.apiBrowserSessionByID)
-	s.mux.HandleFunc("POST /api/v1/browser/sessions/", s.apiBrowserSessionByID)
-	s.mux.HandleFunc("DELETE /api/v1/browser/sessions/", s.apiBrowserSessionByID)
 	s.mux.HandleFunc("GET /api/v1/auth/status", s.apiAuthStatus)
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.apiAuthLogin)
 	s.mux.HandleFunc("POST /api/v1/auth/logout", s.apiAuthLogout)

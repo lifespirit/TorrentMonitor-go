@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
-	"torrentmonitor-go/internal/browserbroker"
 	"torrentmonitor-go/internal/core"
+	"torrentmonitor-go/internal/flaresolverr"
 	"torrentmonitor-go/internal/scheduler"
 	"torrentmonitor-go/internal/store"
 	"torrentmonitor-go/internal/web"
@@ -28,6 +26,7 @@ type App struct {
 	logger    *slog.Logger
 	httpSrv   *http.Server
 	scheduler *scheduler.Scheduler
+	solver    *flaresolverr.Client
 }
 
 func New(cfg Config, logger *slog.Logger) (*App, error) {
@@ -59,22 +58,9 @@ func New(cfg Config, logger *slog.Logger) (*App, error) {
 		settings = core.DefaultSettings()
 	}
 
-	browserCfg := core.BrowserConfigFromSettings(settings)
-	if strings.TrimSpace(browserCfg.Binary) == "" {
-		browserCfg.Binary = os.Getenv("TM_BROWSER_BINARY")
-	}
-	if strings.TrimSpace(browserCfg.ProfileBase) == "" {
-		browserCfg.ProfileBase = os.Getenv("TM_BROWSER_PROFILE_BASE")
-	}
-	if core.NormalizeBrowserMode(settings.BrowserMode) == core.BrowserModeExternal && strings.TrimSpace(browserCfg.ConnectURL) == "" {
-		browserCfg.ConnectURL = os.Getenv("TM_BROWSER_CONNECT_URL")
-	}
-	if !browserCfg.Debug {
-		browserCfg.Debug = envBoolDefault("TM_BROWSER_DEBUG", false)
-	}
-	browser := browserbroker.New(browserCfg, logger)
+	solver := flaresolverr.New(core.FlareSolverrConfigFromSettings(settings), logger)
 
-	svc := core.NewServiceWithBrowser(repo, logger, nil, browser)
+	svc := core.NewServiceWithSolver(repo, logger, nil, solver)
 	if res, err := svc.ReloadTemplatesFromSettings(context.Background()); err != nil {
 		logger.Warn("failed to load external templates", "error", err)
 	} else if res.Loaded > 0 {
@@ -92,12 +78,13 @@ func New(cfg Config, logger *slog.Logger) (*App, error) {
 		TemplateInterval: templateInterval,
 	}, svc, logger)
 
-	srv := web.NewServer(web.Config{}, svc, sch, logger, browser)
+	srv := web.NewServer(web.Config{}, svc, sch, logger)
 
 	return &App{
 		cfg:       cfg,
 		logger:    logger,
 		scheduler: sch,
+		solver:    solver,
 		httpSrv: &http.Server{
 			Addr:              cfg.ListenAddr,
 			Handler:           srv.Handler(),
@@ -107,6 +94,9 @@ func New(cfg Config, logger *slog.Logger) (*App, error) {
 }
 
 func (a *App) Start(ctx context.Context) error {
+	if a.solver != nil {
+		defer a.solver.Close()
+	}
 	a.scheduler.Start(ctx)
 
 	errCh := make(chan error, 1)
@@ -122,20 +112,5 @@ func (a *App) Start(ctx context.Context) error {
 		return a.httpSrv.Shutdown(shutdownCtx)
 	case err := <-errCh:
 		return err
-	}
-}
-
-func envBoolDefault(key string, fallback bool) bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	if v == "" {
-		return fallback
-	}
-	switch v {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return fallback
 	}
 }

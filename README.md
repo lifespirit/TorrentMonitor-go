@@ -35,18 +35,13 @@ TorrentMonitor самостоятельно выполняет HTTP-запрос
 
 Native HTTP следует использовать всегда, когда трекер не требует JavaScript, Cloudflare или интерактивную CAPTCHA.
 
-### Chromium
+### FlareSolverr
 
-TorrentMonitor подключается к Chromium через Chrome DevTools Protocol и использует постоянный браузерный профиль. Страницы темы и загрузка могут выполняться в той же авторизованной сессии.
+Для трекеров с Cloudflare/JavaScript-проверками TorrentMonitor обращается к внешнему [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) через HTTP API. Для каждого трекера создаётся отдельная постоянная FlareSolverr-сессия, поэтому cookies после challenge и авторизации переиспользуются следующими проверками.
 
-В веб-интерфейсе доступен просмотр интерактивной браузерной сессии. В ней можно вручную:
+TorrentMonitor умеет автоматически выполнять описанный в YAML form-login через FlareSolverr. Ручной Chromium, CDP, графическая сессия и Weston больше не нужны.
 
-- войти на трекер;
-- пройти CAPTCHA;
-- пройти Cloudflare или другую JavaScript-проверку;
-- подтвердить дополнительные запросы сайта.
-
-После успешной авторизации профиль сохраняется и повторно используется планировщиком. Chromium можно запустить самим TorrentMonitor в существующей графической сессии либо отдельным сервисом внутри headless Weston.
+Современный FlareSolverr возвращает HTML, cookies и User-Agent, но не бинарные загрузки. Поэтому страницы и login проходят через FlareSolverr, а файл `.torrent` скачивается TorrentMonitor напрямую с теми же cookies, User-Agent и proxy. Если FlareSolverr находится на другом хосте, для Cloudflare-защищённых download-endpoint важно обеспечить тот же внешний IP (например, общим proxy).
 
 ## Быстрый запуск
 
@@ -63,7 +58,6 @@ CGO_ENABLED=1 go run ./cmd/torrentmonitor
 ## Документация
 
 - [Сборка и установка](docs/BUILD_INSTALL.md)
-- [Chromium в headless Weston](docs/CHROMIUM_WESTON.md)
 - [Пример системного сервиса](docs/torrentmonitor.service)
 - [Репозиторий шаблонов](https://github.com/lifespirit/TorrentMonitor-templates)
 
@@ -75,12 +69,9 @@ CGO_ENABLED=1 go run ./cmd/torrentmonitor
 | `TM_STORE` | `sqlite`, `json` или `memory` | `sqlite` |
 | `TM_DATA_FILE` | Путь к базе/JSON | каталог данных пользователя |
 | `TM_MONITOR_INTERVAL` | Начальный интервал планировщика | `15m` |
+| `TM_FLARESOLVERR_URL` | API FlareSolverr | `http://127.0.0.1:8191/v1` |
 | `TM_TEMPLATE_DIR` | Каталог внешних шаблонов | каталог данных пользователя |
 | `TM_TEMPLATE_SOURCE_URL` | ZIP/YAML/JSON/каталог с шаблонами | пусто |
-| `TM_BROWSER_CONNECT_URL` | DevTools URL внешнего Chromium | пусто |
-| `TM_BROWSER_BINARY` | Путь к Chromium | автоопределение |
-| `TM_BROWSER_PROFILE_BASE` | Базовый каталог профилей | каталог данных пользователя |
-| `TM_BROWSER_DEBUG` | Дополнительные логи BrowserBroker | `false` |
 
 Большинство параметров после первого запуска настраивается и сохраняется через веб-интерфейс.
 
