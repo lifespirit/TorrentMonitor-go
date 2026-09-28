@@ -589,14 +589,23 @@ func (s *Service) RunMonitorOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	blockedTrackers := map[string]bool{}
 	s.logger.Info("monitor cycle started", "items", len(items))
 	for _, item := range items {
 		if item.Paused || item.Type != TrackerTypeForum {
 			continue
 		}
+		tracker := normalizeTracker(item.Tracker)
+		if blockedTrackers[tracker] {
+			continue
+		}
 		result, err := s.CheckTorrent(ctx, item.ID)
 		if err != nil {
 			s.logger.Warn("torrent check failed", "id", item.ID, "tracker", item.Tracker, "error", err)
+			if flaresolverr.IsChallengeError(err) {
+				blockedTrackers[tracker] = true
+				s.logger.Warn("skipping remaining tracker items after repeated FlareSolverr challenge failure", "tracker", item.Tracker)
+			}
 			continue
 		}
 		if result.Updated {

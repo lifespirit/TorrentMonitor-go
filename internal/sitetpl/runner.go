@@ -114,6 +114,8 @@ func NormalizeTemplate(t *Template) {
 	if t.Auth.Check == nil && strings.TrimSpace(t.URLs.AuthCheck) != "" {
 		t.Auth.Check = &HTTPRequest{Method: "GET", URL: strings.TrimSpace(t.URLs.AuthCheck), Success: normalizeMatchRules(t.Auth.LoggedIn)}
 	}
+	t.Auth.LoggedIn = normalizeMatchRules(t.Auth.LoggedIn)
+	t.Auth.LoggedOut = normalizeMatchRules(t.Auth.LoggedOut)
 	if t.Auth.Check != nil {
 		if strings.TrimSpace(t.Auth.Check.Method) == "" {
 			t.Auth.Check.Method = "GET"
@@ -399,8 +401,10 @@ func (r *Runner) Check(ctx context.Context, req CheckRequest) (CheckResult, erro
 	if err != nil {
 		return CheckResult{}, err
 	}
-	if err := access.Prepare(ctx, vars, req.Settings); err != nil {
-		return CheckResult{}, err
+	if _, isFlareSolverr := access.(*flareSolverrSiteAccess); !isFlareSolverr {
+		if err := access.Prepare(ctx, vars, req.Settings); err != nil {
+			return CheckResult{}, err
+		}
 	}
 
 	body, err := access.FetchPage(ctx, tmpl.Item.Page, vars, req.Settings)
@@ -537,17 +541,6 @@ func (r *Runner) checkLoginFlareSolverr(ctx context.Context, tmpl Template, req 
 	access := &flareSolverrSiteAccess{tmpl: tmpl, browser: req.Browser, cred: req.Credential}
 	if err := access.Prepare(ctx, vars, req.Settings); err != nil {
 		return LoginCheckResult{}, err
-	}
-	if tmpl.Auth.Check != nil {
-		dom, err := access.request(ctx, *tmpl.Auth.Check, vars, req.Settings)
-		if err != nil {
-			return LoginCheckResult{}, fmt.Errorf("flaresolverr login check: %w", err)
-		}
-		page := decodeBody(dom, tmpl.Encoding.Response)
-		success := renderMatchRules(tmpl.Auth.Check.Success, vars)
-		if !matchSuccess(page, success) {
-			return LoginCheckResult{}, errors.New("FlareSolverr session is not authorized on tracker")
-		}
 	}
 	return LoginCheckResult{
 		OK:       true,

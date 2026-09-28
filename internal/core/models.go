@@ -310,9 +310,11 @@ func FlareSolverrConfigFromSettings(settings Settings) flaresolverr.Config {
 		timeout = 60 * time.Second
 	}
 	return flaresolverr.Config{
-		URL:     strings.TrimSpace(settings.FlareSolverrURL),
-		Timeout: timeout,
-		Debug:   settings.Debug,
+		URL:                strings.TrimSpace(settings.FlareSolverrURL),
+		Timeout:            timeout,
+		Debug:              settings.Debug,
+		MinRequestInterval: time.Second,
+		ChallengeCooldown:  30 * time.Second,
 	}
 }
 

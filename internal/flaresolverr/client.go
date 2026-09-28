@@ -22,9 +22,11 @@ import (
 const defaultEndpoint = "http://127.0.0.1:8191/v1"
 
 type Config struct {
-	URL     string
-	Timeout time.Duration
-	Debug   bool
+	URL                string
+	Timeout            time.Duration
+	Debug              bool
+	MinRequestInterval time.Duration
+	ChallengeCooldown  time.Duration
 }
 
 type Logger interface {
@@ -39,6 +41,32 @@ func (noopLogger) Info(string, ...any)  {}
 func (noopLogger) Warn(string, ...any)  {}
 func (noopLogger) Error(string, ...any) {}
 
+type ChallengeError struct {
+	Message string
+}
+
+func (e *ChallengeError) Error() string {
+	if e == nil || strings.TrimSpace(e.Message) == "" {
+		return "FlareSolverr challenge failed"
+	}
+	return strings.TrimSpace(e.Message)
+}
+
+func IsChallengeError(err error) bool {
+	var target *ChallengeError
+	return errors.As(err, &target)
+}
+
+func challengeErrorFromMessage(message string) error {
+	message = strings.TrimSpace(message)
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "error solving the challenge") ||
+		(strings.Contains(lower, "challenge") && strings.Contains(lower, "timeout")) {
+		return &ChallengeError{Message: message}
+	}
+	return nil
+}
+
 type Client struct {
 	mu       sync.Mutex
 	cfg      Config
@@ -47,10 +75,12 @@ type Client struct {
 }
 
 type sessionState struct {
-	ID        string
-	ProxyURL  string
-	UserAgent string
-	Cookies   []Cookie
+	ID            string
+	ProxyURL      string
+	UserAgent     string
+	Cookies       []Cookie
+	NextRequest   time.Time
+	CooldownUntil time.Time
 }
 
 type Cookie struct {
@@ -182,6 +212,32 @@ func (c *Client) Request(ctx context.Context, tracker, method, rawURL, postData 
 	if timeout <= 0 {
 		timeout = cfg.Timeout
 	}
+
+	attempts := 1
+	if method == http.MethodGet && cfg.ChallengeCooldown > 0 {
+		attempts = 2
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		if err := c.waitBeforeRequest(ctx, tracker, state.ID, cfg); err != nil {
+			return nil, err
+		}
+		data, err := c.requestOnce(ctx, tracker, method, rawURL, postData, cookies, timeout, state, cfg)
+		if err == nil {
+			return data, nil
+		}
+		if !IsChallengeError(err) {
+			return nil, err
+		}
+		c.markChallengeCooldown(tracker, state.ID, cfg.ChallengeCooldown)
+		if method != http.MethodGet || attempt+1 >= attempts {
+			return nil, err
+		}
+		c.logger.Warn("FlareSolverr challenge timed out; retrying after cooldown", "tracker", tracker, "url", rawURL, "cooldown", cfg.ChallengeCooldown)
+	}
+	return nil, errors.New("FlareSolverr request failed")
+}
+
+func (c *Client) requestOnce(ctx context.Context, tracker, method, rawURL, postData string, cookies map[string]string, timeout time.Duration, state *sessionState, cfg Config) ([]byte, error) {
 	cmd := "request.get"
 	if method == http.MethodPost {
 		cmd = "request.post"
@@ -204,6 +260,9 @@ func (c *Client) Request(ctx context.Context, tracker, method, rawURL, postData 
 		if strings.TrimSpace(resp.Message) == "" {
 			resp.Message = "unknown FlareSolverr error"
 		}
+		if challengeErr := challengeErrorFromMessage(resp.Message); challengeErr != nil {
+			return nil, challengeErr
+		}
 		return nil, errors.New(resp.Message)
 	}
 	if resp.Solution.Status >= 400 {
@@ -219,6 +278,54 @@ func (c *Client) Request(ctx context.Context, tracker, method, rawURL, postData 
 		c.logger.Info("FlareSolverr request completed", "tracker", tracker, "url", rawURL, "status", resp.Solution.Status, "cookies", len(resp.Solution.Cookies))
 	}
 	return []byte(resp.Solution.Response), nil
+}
+
+func (c *Client) waitBeforeRequest(ctx context.Context, tracker, sessionID string, cfg Config) error {
+	key := sessionKey(tracker)
+	c.mu.Lock()
+	state := c.sessions[key]
+	if state == nil || state.ID != sessionID {
+		c.mu.Unlock()
+		return nil
+	}
+	now := time.Now()
+	ready := now
+	if state.NextRequest.After(ready) {
+		ready = state.NextRequest
+	}
+	if state.CooldownUntil.After(ready) {
+		ready = state.CooldownUntil
+	}
+	if cfg.MinRequestInterval > 0 {
+		state.NextRequest = ready.Add(cfg.MinRequestInterval)
+	}
+	c.mu.Unlock()
+
+	delay := time.Until(ready)
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (c *Client) markChallengeCooldown(tracker, sessionID string, cooldown time.Duration) {
+	if cooldown <= 0 {
+		return
+	}
+	key := sessionKey(tracker)
+	until := time.Now().Add(cooldown)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if state := c.sessions[key]; state != nil && state.ID == sessionID && until.After(state.CooldownUntil) {
+		state.CooldownUntil = until
+	}
 }
 
 // SolveTurnstile opens the configured page through request.get in the same
@@ -242,6 +349,9 @@ func (c *Client) SolveTurnstile(ctx context.Context, tracker, rawURL string, coo
 	if timeout <= 0 {
 		timeout = cfg.Timeout
 	}
+	if err := c.waitBeforeRequest(ctx, tracker, state.ID, cfg); err != nil {
+		return "", err
+	}
 	payload := map[string]any{
 		"cmd":              "request.get",
 		"url":              rawURL,
@@ -252,11 +362,18 @@ func (c *Client) SolveTurnstile(ctx context.Context, tracker, rawURL string, coo
 	addPayloadCookies(payload, cookies)
 	resp, err := c.call(ctx, cfg, payload, timeout)
 	if err != nil {
+		if IsChallengeError(err) {
+			c.markChallengeCooldown(tracker, state.ID, cfg.ChallengeCooldown)
+		}
 		return "", err
 	}
 	if !strings.EqualFold(resp.Status, "ok") {
 		if strings.TrimSpace(resp.Message) == "" {
 			resp.Message = "unknown FlareSolverr error"
+		}
+		if challengeErr := challengeErrorFromMessage(resp.Message); challengeErr != nil {
+			c.markChallengeCooldown(tracker, state.ID, cfg.ChallengeCooldown)
+			return "", challengeErr
 		}
 		return "", errors.New(resp.Message)
 	}
@@ -322,6 +439,9 @@ func (c *Client) Download(ctx context.Context, tracker, rawURL string, headers m
 	c.mu.Unlock()
 	if timeout <= 0 {
 		timeout = cfg.Timeout
+	}
+	if err := c.waitBeforeRequest(ctx, tracker, state.ID, cfg); err != nil {
+		return nil, err
 	}
 	transport, err := proxyTransport(proxyType, proxyAddress)
 	if err != nil {
@@ -435,6 +555,15 @@ func (c *Client) call(ctx context.Context, cfg Config, payload map[string]any, t
 		return out, err
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		var apiErr apiResponse
+		if json.Unmarshal(data, &apiErr) == nil {
+			if challengeErr := challengeErrorFromMessage(apiErr.Message); challengeErr != nil {
+				return out, challengeErr
+			}
+		}
+		if challengeErr := challengeErrorFromMessage(string(data)); challengeErr != nil {
+			return out, challengeErr
+		}
 		return out, fmt.Errorf("FlareSolverr returned HTTP %d: %s", res.StatusCode, strings.TrimSpace(string(data)))
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
