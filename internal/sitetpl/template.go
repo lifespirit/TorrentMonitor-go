@@ -65,6 +65,13 @@ type Auth struct {
 	Steps     []Step       `json:"steps" yaml:"steps"`
 }
 
+type CaptchaConfig struct {
+	Type           string `json:"type" yaml:"type"`
+	URL            string `json:"url" yaml:"url"`
+	TabsTillVerify int    `json:"tabs_till_verify" yaml:"tabs_till_verify"`
+	FormField      string `json:"form_field" yaml:"form_field"`
+}
+
 type ItemFlow struct {
 	ID      ItemID             `json:"id" yaml:"id"`
 	Page    HTTPRequest        `json:"page" yaml:"page"`
@@ -137,6 +144,7 @@ type HTTPRequest struct {
 	FormEncoding string            `json:"form_encoding" yaml:"form_encoding"`
 	Headers      map[string]string `json:"headers" yaml:"headers"`
 	Cookies      map[string]string `json:"cookies" yaml:"cookies"`
+	Captcha      *CaptchaConfig    `json:"captcha" yaml:"captcha"`
 	Success      MatchRules        `json:"success" yaml:"success"`
 }
 

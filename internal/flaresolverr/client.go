@@ -72,12 +72,13 @@ type apiResponse struct {
 }
 
 type solution struct {
-	URL       string            `json:"url"`
-	Status    int               `json:"status"`
-	Headers   map[string]string `json:"headers"`
-	Response  string            `json:"response"`
-	Cookies   []Cookie          `json:"cookies"`
-	UserAgent string            `json:"userAgent"`
+	URL            string            `json:"url"`
+	Status         int               `json:"status"`
+	Headers        map[string]string `json:"headers"`
+	Response       string            `json:"response"`
+	Cookies        []Cookie          `json:"cookies"`
+	UserAgent      string            `json:"userAgent"`
+	TurnstileToken string            `json:"turnstile_token"`
 }
 
 func New(cfg Config, logger Logger) *Client {
@@ -194,23 +195,7 @@ func (c *Client) Request(ctx context.Context, tracker, method, rawURL, postData 
 	if method == http.MethodPost {
 		payload["postData"] = postData
 	}
-	if len(cookies) > 0 {
-		items := make([]map[string]string, 0, len(cookies))
-		keys := make([]string, 0, len(cookies))
-		for k := range cookies {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			if strings.TrimSpace(k) == "" {
-				continue
-			}
-			items = append(items, map[string]string{"name": k, "value": cookies[k]})
-		}
-		if len(items) > 0 {
-			payload["cookies"] = items
-		}
-	}
+	addPayloadCookies(payload, cookies)
 	resp, err := c.call(ctx, cfg, payload, timeout)
 	if err != nil {
 		return nil, err
@@ -234,6 +219,85 @@ func (c *Client) Request(ctx context.Context, tracker, method, rawURL, postData 
 		c.logger.Info("FlareSolverr request completed", "tracker", tracker, "url", rawURL, "status", resp.Solution.Status, "cookies", len(resp.Solution.Cookies))
 	}
 	return []byte(resp.Solution.Response), nil
+}
+
+// SolveTurnstile opens the configured page through request.get in the same
+// stable tracker session. FlareSolverr uses tabs_till_verify to focus and solve
+// the Turnstile widget, then returns the value of cf-turnstile-response.
+func (c *Client) SolveTurnstile(ctx context.Context, tracker, rawURL string, cookies map[string]string, tabsTillVerify int, timeout time.Duration, proxyType, proxyAddress string) (string, error) {
+	if err := validateHTTPURL(rawURL); err != nil {
+		return "", err
+	}
+	if tabsTillVerify <= 0 {
+		return "", errors.New("tabs_till_verify must be greater than zero")
+	}
+	proxyURL, err := canonicalProxyURL(proxyType, proxyAddress)
+	if err != nil {
+		return "", err
+	}
+	state, cfg, err := c.ensureSession(ctx, tracker, proxyURL)
+	if err != nil {
+		return "", err
+	}
+	if timeout <= 0 {
+		timeout = cfg.Timeout
+	}
+	payload := map[string]any{
+		"cmd":              "request.get",
+		"url":              rawURL,
+		"session":          state.ID,
+		"maxTimeout":       timeout.Milliseconds(),
+		"tabs_till_verify": tabsTillVerify,
+	}
+	addPayloadCookies(payload, cookies)
+	resp, err := c.call(ctx, cfg, payload, timeout)
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(resp.Status, "ok") {
+		if strings.TrimSpace(resp.Message) == "" {
+			resp.Message = "unknown FlareSolverr error"
+		}
+		return "", errors.New(resp.Message)
+	}
+	if resp.Solution.Status >= 400 {
+		return "", fmt.Errorf("%s returned HTTP %d through FlareSolverr", rawURL, resp.Solution.Status)
+	}
+	c.mu.Lock()
+	if current := c.sessions[sessionKey(tracker)]; current != nil && current.ID == state.ID {
+		current.UserAgent = resp.Solution.UserAgent
+		current.Cookies = append([]Cookie(nil), resp.Solution.Cookies...)
+	}
+	c.mu.Unlock()
+	token := strings.TrimSpace(resp.Solution.TurnstileToken)
+	if token == "" {
+		return "", fmt.Errorf("FlareSolverr did not return a Turnstile token for %s", rawURL)
+	}
+	if cfg.Debug {
+		c.logger.Info("FlareSolverr Turnstile solved", "tracker", tracker, "url", rawURL)
+	}
+	return token, nil
+}
+
+func addPayloadCookies(payload map[string]any, cookies map[string]string) {
+	if len(cookies) == 0 {
+		return
+	}
+	items := make([]map[string]string, 0, len(cookies))
+	keys := make([]string, 0, len(cookies))
+	for k := range cookies {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		items = append(items, map[string]string{"name": k, "value": cookies[k]})
+	}
+	if len(items) > 0 {
+		payload["cookies"] = items
+	}
 }
 
 // Download performs the binary request with the cookies and User-Agent returned

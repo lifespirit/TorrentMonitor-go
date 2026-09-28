@@ -128,6 +128,59 @@ func (a *flareSolverrSiteAccess) Prepare(ctx context.Context, vars map[string]st
 	return nil
 }
 
+func (a *flareSolverrSiteAccess) preparePost(ctx context.Context, spec HTTPRequest, rawURL string, vars map[string]string, settings Settings) (HTTPRequest, bool, error) {
+	cfg := spec.Captcha
+	if cfg == nil {
+		return spec, false, nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(cfg.Type), "turnstile") {
+		return HTTPRequest{}, false, fmt.Errorf("unsupported captcha type %q", cfg.Type)
+	}
+	if cfg.TabsTillVerify <= 0 {
+		return HTTPRequest{}, false, errors.New("turnstile tabs_till_verify must be greater than zero")
+	}
+	solver, ok := a.browser.(BrowserTurnstileSolver)
+	if !ok {
+		return HTTPRequest{}, false, errors.New("configured browser backend does not support Turnstile solving")
+	}
+	preflightURL := strings.TrimSpace(render(cfg.URL, vars))
+	if preflightURL == "" {
+		preflightURL = strings.TrimSpace(rawURL)
+	}
+	if preflightURL == "" {
+		return HTTPRequest{}, false, errors.New("turnstile preflight URL is empty")
+	}
+	proxyType, proxyAddress := a.proxy(settings)
+	token, err := solver.SolveTurnstile(
+		ctx,
+		a.tmpl.Site,
+		preflightURL,
+		a.requestCookies(spec, vars),
+		cfg.TabsTillVerify,
+		settings.Timeout,
+		proxyType,
+		proxyAddress,
+	)
+	if err != nil {
+		return HTTPRequest{}, false, err
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return HTTPRequest{}, false, errors.New("turnstile token was not returned")
+	}
+	field := strings.TrimSpace(cfg.FormField)
+	if field == "" {
+		field = "cf-turnstile-response"
+	}
+	form := make(map[string]string, len(spec.Form)+1)
+	for k, v := range spec.Form {
+		form[k] = v
+	}
+	form[field] = token
+	spec.Form = form
+	return spec, true, nil
+}
+
 func (a *flareSolverrSiteAccess) FetchPage(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
 	data, err := a.request(ctx, spec, vars, settings)
 	if err != nil {
@@ -152,22 +205,25 @@ func (a *flareSolverrSiteAccess) request(ctx context.Context, spec HTTPRequest, 
 		return nil, errors.New("FlareSolverr request URL is empty")
 	}
 	proxyType, proxyAddress := a.proxy(settings)
-	cookies := make(map[string]string, len(spec.Cookies)+4)
-	for _, cookie := range parseCookieHeader(a.cred.Cookie) {
-		if cookie != nil && strings.TrimSpace(cookie.Name) != "" {
-			cookies[cookie.Name] = cookie.Value
-		}
-	}
-	for k, v := range spec.Cookies {
-		if strings.TrimSpace(k) != "" {
-			cookies[k] = render(v, vars)
-		}
-	}
-	postData := ""
-	if len(spec.Form) > 0 {
-		postData = encodeForm(spec.Form, vars, spec.FormEncoding)
-	}
 	if requester, ok := a.browser.(BrowserRequester); ok {
+		preflightDone := false
+		if method == http.MethodPost {
+			var err error
+			spec, preflightDone, err = a.preparePost(ctx, spec, rawURL, vars, settings)
+			if err != nil {
+				return nil, fmt.Errorf("prepare FlareSolverr POST: %w", err)
+			}
+		}
+		cookies := a.requestCookies(spec, vars)
+		if method == http.MethodPost && !preflightDone {
+			if _, err := requester.Request(ctx, a.tmpl.Site, http.MethodGet, rawURL, "", cookies, settings.Timeout, proxyType, proxyAddress); err != nil {
+				return nil, fmt.Errorf("FlareSolverr POST preflight GET %s: %w", rawURL, err)
+			}
+		}
+		postData := ""
+		if len(spec.Form) > 0 {
+			postData = encodeForm(spec.Form, vars, spec.FormEncoding)
+		}
 		data, err := requester.Request(ctx, a.tmpl.Site, method, rawURL, postData, cookies, settings.Timeout, proxyType, proxyAddress)
 		if err != nil {
 			return nil, err
@@ -189,6 +245,21 @@ func (a *flareSolverrSiteAccess) request(ctx context.Context, spec HTTPRequest, 
 		return waiter.FetchPageWait(ctx, a.tmpl.Site, rawURL, settings.Timeout, expectedURLNeedles(rawURL), requiredAllMarkers(success), requiredAnyMarkers(success), strings.TrimSpace(success.Regex))
 	}
 	return a.browser.FetchPage(ctx, a.tmpl.Site, rawURL)
+}
+
+func (a *flareSolverrSiteAccess) requestCookies(spec HTTPRequest, vars map[string]string) map[string]string {
+	cookies := make(map[string]string, len(spec.Cookies)+4)
+	for _, cookie := range parseCookieHeader(a.cred.Cookie) {
+		if cookie != nil && strings.TrimSpace(cookie.Name) != "" {
+			cookies[cookie.Name] = cookie.Value
+		}
+	}
+	for k, v := range spec.Cookies {
+		if strings.TrimSpace(k) != "" {
+			cookies[k] = render(v, vars)
+		}
+	}
+	return cookies
 }
 
 func (a *flareSolverrSiteAccess) DownloadTorrent(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
