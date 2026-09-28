@@ -114,7 +114,6 @@ func TestClientReusesSessionAndDownloadsWithSolvedIdentity(t *testing.T) {
 	}
 }
 
-
 func TestClientPostsFormNativelyWithoutReencodingAndSyncsCookies(t *testing.T) {
 	var (
 		mu       sync.Mutex
