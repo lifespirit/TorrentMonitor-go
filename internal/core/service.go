@@ -650,8 +650,9 @@ func (s *Service) CheckTorrent(ctx context.Context, id int64) (TorrentCheckResul
 			Tracker:   item.Tracker,
 			Name:      item.Name,
 			URL:       item.URL,
-			TorrentID: item.TorrentID,
-			UpdatedAt: item.UpdatedAt,
+			TorrentID:   item.TorrentID,
+			UpdatedAt:   item.UpdatedAt,
+			UpdateTitle: item.UpdateTitle,
 		},
 		Credential: sitetpl.Credential{Login: cred.Login, Password: cred.Password, Passkey: cred.Passkey, Cookie: cred.Cookie, AccessMode: string(cred.AccessMode), UseProxy: cred.UseProxy},
 		Settings: sitetpl.Settings{
@@ -667,34 +668,6 @@ func (s *Service) CheckTorrent(ctx context.Context, id int64) (TorrentCheckResul
 		s.handleTorrentCheckError(ctx, item, err)
 		return TorrentCheckResult{}, err
 	}
-	if _, clearErr := s.repo.ClearWarnings(ctx, item.Tracker); clearErr != nil {
-		s.logger.Warn("failed to clear tracker warnings after successful check", "tracker", item.Tracker, "error", clearErr)
-	}
-	if cred.ID != 0 && result.SessionCookie != "" && result.SessionCookie != cred.Cookie {
-		cookie := result.SessionCookie
-		if _, saveErr := s.repo.UpdateCredential(ctx, cred.ID, UpdateCredentialRequest{Cookie: &cookie}); saveErr != nil {
-			s.logger.Warn("failed to persist tracker session cookie", "tracker", item.Tracker, "error", saveErr)
-		}
-	}
-	patch := UpdateTorrentRequest{}
-	if strings.TrimSpace(result.Title) != "" && item.UpdateTitle && result.Title != item.Name {
-		title := result.Title
-		patch.Name = &title
-	}
-	if result.UpdatedAt != nil {
-		patch.UpdatedAt = result.UpdatedAt
-	}
-	closed := result.Closed
-	patch.Closed = &closed
-	hasError := false
-	patch.HasError = &hasError
-	if patch.Name != nil || patch.UpdatedAt != nil || patch.Closed != nil || patch.HasError != nil {
-		if updated, saveErr := s.repo.UpdateTorrent(ctx, item.ID, patch); saveErr != nil {
-			s.logger.Warn("failed to persist torrent check state", "id", item.ID, "tracker", item.Tracker, "error", saveErr)
-		} else {
-			item = updated
-		}
-	}
 
 	clientHash := strings.TrimSpace(item.Hash)
 	clientAddOK := false
@@ -709,6 +682,7 @@ func (s *Service) CheckTorrent(ctx context.Context, id int64) (TorrentCheckResul
 			SessionExpires: settings.TorrentSessionCookieExpires,
 		})
 		if err != nil {
+			s.handleTorrentCheckError(ctx, item, fmt.Errorf("torrent client initialization: %w", err))
 			return TorrentCheckResult{}, err
 		}
 		deleteFiles := settings.DeleteOldFiles
@@ -732,6 +706,7 @@ func (s *Service) CheckTorrent(ctx context.Context, id int64) (TorrentCheckResul
 			}
 		}
 		if addErr != nil {
+			s.handleTorrentCheckError(ctx, item, fmt.Errorf("torrent client upload: %w", addErr))
 			return TorrentCheckResult{}, addErr
 		}
 		clientAddOK = true
@@ -742,12 +717,34 @@ func (s *Service) CheckTorrent(ctx context.Context, id int64) (TorrentCheckResul
 				return TorrentCheckResult{}, hashErr
 			}
 			item = updated
-			if result.UpdatedAt != nil {
-				if updated, saveErr := s.repo.UpdateTorrent(ctx, item.ID, UpdateTorrentRequest{UpdatedAt: result.UpdatedAt}); saveErr == nil {
-					item = updated
-				}
-			}
 		}
+	}
+
+	// Commit the observed title and timestamp only after the torrent was
+	// downloaded and accepted by the configured torrent client. Otherwise
+	// a failed upload makes the next check silently skip the same release.
+	patch := UpdateTorrentRequest{}
+	if strings.TrimSpace(result.Title) != "" && item.UpdateTitle && result.Title != item.Name {
+		title := result.Title
+		patch.Name = &title
+	}
+	if result.UpdatedAt != nil {
+		patch.UpdatedAt = result.UpdatedAt
+	}
+	closed := result.Closed
+	patch.Closed = &closed
+	hasError := false
+	patch.HasError = &hasError
+	if patch.Name != nil || patch.UpdatedAt != nil || patch.Closed != nil || patch.HasError != nil {
+		updated, saveErr := s.repo.UpdateTorrent(ctx, item.ID, patch)
+		if saveErr != nil {
+			return TorrentCheckResult{}, fmt.Errorf("persist torrent check state: %w", saveErr)
+		}
+		item = updated
+	}
+
+	if _, clearErr := s.repo.ClearWarnings(ctx, item.Tracker); clearErr != nil {
+		s.logger.Warn("failed to clear tracker warnings after successful check", "tracker", item.Tracker, "error", clearErr)
 	}
 
 	if result.Updated && strings.TrimSpace(settings.PostUpdateScript) != "" {
