@@ -31,6 +31,11 @@ http:
 
 auth:
   type: form
+  logged_out:
+    contains_all:
+      - name="username"
+      - name="password"
+      - action="login.php"
   check:
     method: GET
     url: https://nnmclub.to/forum/index.php

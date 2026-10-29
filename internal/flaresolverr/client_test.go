@@ -200,3 +200,89 @@ func TestClientSolvesTurnstileAndReusesSession(t *testing.T) {
 		}
 	}
 }
+
+func TestClientRetriesChallengeTimeoutInSameSession(t *testing.T) {
+	var (
+		mu          sync.Mutex
+		commands    []string
+		sessions    []string
+		requestGets int
+	)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1", func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		cmd, _ := req["cmd"].(string)
+		mu.Lock()
+		commands = append(commands, cmd)
+		if session, _ := req["session"].(string); session != "" {
+			sessions = append(sessions, session)
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch cmd {
+		case "sessions.create":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		case "request.get":
+			mu.Lock()
+			requestGets++
+			attempt := requestGets
+			mu.Unlock()
+			if attempt == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"status":  "error",
+					"message": "Error: Error solving the challenge. Timeout after 0.1 seconds.",
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "ok",
+				"solution": map[string]any{
+					"url":       req["url"],
+					"status":    200,
+					"response":  "<html>recovered</html>",
+					"userAgent": "test",
+					"cookies":   []map[string]any{},
+				},
+			})
+		case "sessions.destroy":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		default:
+			http.Error(w, "unexpected command", http.StatusBadRequest)
+		}
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := New(Config{
+		URL:               srv.URL + "/v1",
+		Timeout:           2 * time.Second,
+		ChallengeCooldown: time.Millisecond,
+	}, nil)
+	data, err := client.FetchPage(context.Background(), "rutracker.org", "https://rutracker.org/forum/viewtopic.php?t=1")
+	if err != nil {
+		t.Fatalf("FetchPage: %v", err)
+	}
+	if string(data) != "<html>recovered</html>" {
+		t.Fatalf("data = %q", data)
+	}
+	client.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if requestGets != 2 {
+		t.Fatalf("request.get attempts = %d, want 2", requestGets)
+	}
+	if len(sessions) < 4 {
+		t.Fatalf("sessions = %v", sessions)
+	}
+	created := sessions[0]
+	for _, session := range sessions[1:] {
+		if session != created {
+			t.Fatalf("session changed during recovery: %v", sessions)
+		}
+	}
+}

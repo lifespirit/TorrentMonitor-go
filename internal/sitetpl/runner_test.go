@@ -227,8 +227,10 @@ func TestRunnerNativeModeDoesNotFallbackToFlareSolverrForForbiddenPage(t *testin
 }
 
 type fakeFlareSolverrFetcher struct {
-	calls []string
-	html  string
+	calls     []string
+	html      string
+	guestHTML string
+	loggedIn  bool
 }
 
 func (f *fakeFlareSolverrFetcher) FetchPage(ctx context.Context, tracker string, rawURL string) ([]byte, error) {
@@ -239,7 +241,11 @@ func (f *fakeFlareSolverrFetcher) FetchPage(ctx context.Context, tracker string,
 func (f *fakeFlareSolverrFetcher) Request(ctx context.Context, tracker, method, rawURL, postData string, cookies map[string]string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error) {
 	f.calls = append(f.calls, method+" "+tracker+" "+rawURL+" "+postData)
 	if method == http.MethodPost {
+		f.loggedIn = true
 		return []byte("login ok"), nil
+	}
+	if !f.loggedIn && f.guestHTML != "" && strings.Contains(rawURL, "/topic") {
+		return []byte(f.guestHTML), nil
 	}
 	return []byte(f.html), nil
 }
@@ -260,7 +266,10 @@ func TestRunnerLegacyChromiumModeUsesFlareSolverrAndPerformsLogin(t *testing.T) 
 		Site:    "flaresolverr.test",
 		Kind:    "forum",
 		Mode:    ModeHTTP,
-		Auth:    Auth{Login: &HTTPRequest{Method: "POST", URL: srv.URL + "/login", Form: map[string]string{"u": "{{ credentials.login }}", "p": "{{ credentials.password }}"}}},
+		Auth: Auth{
+			LoggedOut: MatchRules{ContainsAll: []string{"login_username", "login_password"}},
+			Login:     &HTTPRequest{Method: "POST", URL: srv.URL + "/login", Form: map[string]string{"u": "{{ credentials.login }}", "p": "{{ credentials.password }}"}},
+		},
 		Item: ItemFlow{
 			Page: HTTPRequest{Method: "GET", URL: "https://flaresolverr.test/topic?id={{ item.torrent_id }}"},
 			Extract: map[string]Extract{
@@ -271,7 +280,10 @@ func TestRunnerLegacyChromiumModeUsesFlareSolverrAndPerformsLogin(t *testing.T) 
 	})
 
 	old := time.Date(2026, 6, 24, 10, 0, 0, 0, time.Local)
-	solver := &fakeFlareSolverrFetcher{html: `<html><head><title>FlareSolverr Release :: Test</title></head><body><span>25-Июн-26 14:30</span></body></html>`}
+	solver := &fakeFlareSolverrFetcher{
+		html:      `<html><head><title>FlareSolverr Release :: Test</title></head><body><span>25-Июн-26 14:30</span></body></html>`,
+		guestHTML: `<html><body><input name="login_username"><input name="login_password"></body></html>`,
+	}
 	result, err := NewRunner(WithRegistry(reg)).Check(context.Background(), CheckRequest{
 		Item:       Item{Tracker: "flaresolverr.test", TorrentID: "42", Name: "Old", UpdatedAt: &old},
 		Credential: Credential{Login: "user", Password: "pass", AccessMode: "chromium"},
@@ -284,20 +296,56 @@ func TestRunnerLegacyChromiumModeUsesFlareSolverrAndPerformsLogin(t *testing.T) 
 	if loginCalled {
 		t.Fatalf("native login endpoint was called in FlareSolverr mode")
 	}
-	if len(solver.calls) != 3 {
-		t.Fatalf("FlareSolverr calls = %v, want GET login preflight + POST login + GET topic", solver.calls)
+	if len(solver.calls) != 4 {
+		t.Fatalf("FlareSolverr calls = %v, want GET topic + GET login preflight + POST login + GET topic retry", solver.calls)
 	}
-	if !strings.HasPrefix(solver.calls[0], "GET ") || !strings.Contains(solver.calls[0], "/login") {
+	if !strings.HasPrefix(solver.calls[0], "GET ") || !strings.Contains(solver.calls[0], "/topic") {
+		t.Fatalf("unexpected first topic call: %v", solver.calls)
+	}
+	if !strings.HasPrefix(solver.calls[1], "GET ") || !strings.Contains(solver.calls[1], "/login") {
 		t.Fatalf("unexpected POST preflight call: %v", solver.calls)
 	}
-	if !strings.HasPrefix(solver.calls[1], "POST ") || !strings.Contains(solver.calls[1], "u=user") || !strings.Contains(solver.calls[1], "p=pass") {
+	if !strings.HasPrefix(solver.calls[2], "POST ") || !strings.Contains(solver.calls[2], "u=user") || !strings.Contains(solver.calls[2], "p=pass") {
 		t.Fatalf("unexpected login call: %v", solver.calls)
 	}
-	if !strings.HasPrefix(solver.calls[2], "GET ") {
-		t.Fatalf("unexpected topic call: %v", solver.calls)
+	if !strings.HasPrefix(solver.calls[3], "GET ") || !strings.Contains(solver.calls[3], "/topic") {
+		t.Fatalf("unexpected topic retry: %v", solver.calls)
 	}
 	if !result.Updated || result.Title != "FlareSolverr Release" {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestFlareSolverrAuthorizedTopicSkipsAuthCheck(t *testing.T) {
+	reg := &Registry{}
+	reg.Register(Template{
+		Version: 1,
+		Site:    "flaresolverr-authorized.test",
+		Kind:    "forum",
+		Mode:    ModeHTTP,
+		Auth: Auth{
+			Check:     &HTTPRequest{Method: "GET", URL: "https://flaresolverr-authorized.test/index", Success: MatchRules{Contains: "logout"}},
+			LoggedOut: MatchRules{ContainsAll: []string{"login_username", "login_password"}},
+			Login:     &HTTPRequest{Method: "POST", URL: "https://flaresolverr-authorized.test/login"},
+		},
+		Item: ItemFlow{
+			Page: HTTPRequest{Method: "GET", URL: "https://flaresolverr-authorized.test/topic"},
+			Extract: map[string]Extract{
+				"title": {Selector: "title"},
+			},
+		},
+	})
+	solver := &fakeFlareSolverrFetcher{html: `<html><head><title>Already logged in</title></head><body>ok</body></html>`, loggedIn: true}
+	if _, err := NewRunner(WithRegistry(reg)).Check(context.Background(), CheckRequest{
+		Item:       Item{Tracker: "flaresolverr-authorized.test", TorrentID: "1", Name: "Old"},
+		Credential: Credential{Login: "user", Password: "pass", AccessMode: "flaresolverr"},
+		Settings:   Settings{Timeout: 5 * time.Second},
+		Browser:    solver,
+	}); err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(solver.calls) != 1 || !strings.Contains(solver.calls[0], "/topic") {
+		t.Fatalf("calls = %v, want only topic GET", solver.calls)
 	}
 }
 

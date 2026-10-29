@@ -100,30 +100,56 @@ func (a *flareSolverrSiteAccess) Prepare(ctx context.Context, vars map[string]st
 	if a.browser == nil {
 		return errors.New("flaresolverr access mode requires FlareSolverr")
 	}
-	var checkErr error
 	if a.tmpl.Auth.Check != nil {
-		if _, err := a.request(ctx, *a.tmpl.Auth.Check, vars, settings); err == nil {
+		authorized, err := a.authCheck(ctx, vars, settings)
+		if err != nil {
+			return fmt.Errorf("flaresolverr auth check: %w", err)
+		}
+		if authorized {
 			return nil
-		} else {
-			checkErr = err
 		}
 	}
 	if a.tmpl.Auth.Login == nil {
-		if checkErr != nil {
-			return fmt.Errorf("flaresolverr auth check: %w", checkErr)
+		return errors.New("FlareSolverr session is not authorized on tracker")
+	}
+	if err := a.login(ctx, vars, settings); err != nil {
+		return err
+	}
+	if a.tmpl.Auth.Check != nil {
+		authorized, err := a.authCheck(ctx, vars, settings)
+		if err != nil {
+			return fmt.Errorf("flaresolverr login check: %w", err)
 		}
-		return nil
+		if !authorized {
+			return errors.New("FlareSolverr session is not authorized on tracker")
+		}
+	}
+	return nil
+}
+
+func (a *flareSolverrSiteAccess) authCheck(ctx context.Context, vars map[string]string, settings Settings) (bool, error) {
+	if a.tmpl.Auth.Check == nil {
+		return false, nil
+	}
+	spec := *a.tmpl.Auth.Check
+	success := renderMatchRules(spec.Success, vars)
+	spec.Success = MatchRules{}
+	data, err := a.request(ctx, spec, vars, settings)
+	if err != nil {
+		return false, err
+	}
+	return matchSuccess(string(data), success), nil
+}
+
+func (a *flareSolverrSiteAccess) login(ctx context.Context, vars map[string]string, settings Settings) error {
+	if a.tmpl.Auth.Login == nil {
+		return errors.New("site template has no FlareSolverr login flow")
 	}
 	if strings.TrimSpace(a.cred.Login) == "" || strings.TrimSpace(a.cred.Password) == "" {
 		return errors.New("login and password are required for FlareSolverr mode")
 	}
 	if _, err := a.request(ctx, *a.tmpl.Auth.Login, vars, settings); err != nil {
 		return fmt.Errorf("flaresolverr login: %w", err)
-	}
-	if a.tmpl.Auth.Check != nil {
-		if _, err := a.request(ctx, *a.tmpl.Auth.Check, vars, settings); err != nil {
-			return fmt.Errorf("flaresolverr login check: %w", err)
-		}
 	}
 	return nil
 }
@@ -182,9 +208,27 @@ func (a *flareSolverrSiteAccess) preparePost(ctx context.Context, spec HTTPReque
 }
 
 func (a *flareSolverrSiteAccess) FetchPage(ctx context.Context, spec HTTPRequest, vars map[string]string, settings Settings) ([]byte, error) {
+	originalSuccess := spec.Success
+	spec.Success = MatchRules{}
 	data, err := a.request(ctx, spec, vars, settings)
 	if err != nil {
 		return nil, err
+	}
+	loggedOut := renderMatchRules(a.tmpl.Auth.LoggedOut, vars)
+	if matchRulesDefined(loggedOut) && matchSuccess(string(data), loggedOut) {
+		if err := a.login(ctx, vars, settings); err != nil {
+			return nil, err
+		}
+		data, err = a.request(ctx, spec, vars, settings)
+		if err != nil {
+			return nil, err
+		}
+		if matchSuccess(string(data), loggedOut) {
+			return nil, errors.New("tracker is still logged out after FlareSolverr login")
+		}
+	}
+	if !matchSuccess(string(data), renderMatchRules(originalSuccess, vars)) {
+		return nil, fmt.Errorf("success markers were not found in %s", render(spec.URL, vars))
 	}
 	if err := validateTemplatePage(a.tmpl, data); err != nil {
 		return nil, err

@@ -62,6 +62,7 @@ type Auth struct {
 	Login     *HTTPRequest `json:"login" yaml:"login"`
 	LoginForm *HTTPRequest `json:"login_form" yaml:"login_form"`
 	LoggedIn  MatchRules   `json:"logged_in" yaml:"logged_in"`
+	LoggedOut MatchRules   `json:"logged_out" yaml:"logged_out"`
 	Steps     []Step       `json:"steps" yaml:"steps"`
 }
 
