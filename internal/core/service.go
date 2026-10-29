@@ -647,9 +647,9 @@ func (s *Service) CheckTorrent(ctx context.Context, id int64) (TorrentCheckResul
 	}
 	result, err := s.runner.Check(ctx, sitetpl.CheckRequest{
 		Item: sitetpl.Item{
-			Tracker:   item.Tracker,
-			Name:      item.Name,
-			URL:       item.URL,
+			Tracker:     item.Tracker,
+			Name:        item.Name,
+			URL:         item.URL,
 			TorrentID:   item.TorrentID,
 			UpdatedAt:   item.UpdatedAt,
 			UpdateTitle: item.UpdateTitle,
