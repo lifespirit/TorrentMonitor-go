@@ -467,10 +467,7 @@ func (r *Runner) Check(ctx context.Context, req CheckRequest) (CheckResult, erro
 			}
 			downloadReq.URL = resolved
 		}
-		if strings.TrimSpace(downloadReq.URL) == "" {
-			return CheckResult{}, errors.New("download torrent: template has no download URL")
-		}
-		{
+		if strings.TrimSpace(downloadReq.URL) != "" {
 			torrent, err := access.DownloadTorrent(ctx, downloadReq, vars, req.Settings)
 			if err != nil {
 				return CheckResult{}, fmt.Errorf("download torrent: %w", err)
