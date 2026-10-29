@@ -78,6 +78,8 @@ topic:
 
 download:
   url: https://rutracker.org/forum/dl.php?t={{ item.torrent_id }}
+  request:
+    method: POST
   before:
     headers:
       Referer: https://rutracker.org/forum/viewtopic.php?t={{ item.torrent_id }}
