@@ -319,7 +319,7 @@ func (a *flareSolverrSiteAccess) DownloadTorrent(ctx context.Context, spec HTTPR
 		return nil, errors.New("flaresolverr download URL is empty")
 	}
 	proxyType, proxyAddress := a.proxy(settings)
-	return downloader.Download(ctx, a.tmpl.Site, rawURL, renderedHeaders(spec.Headers, vars), renderedCookieHeader(spec.Cookies, vars), settings.Timeout, proxyType, proxyAddress)
+	return downloader.Download(ctx, a.tmpl.Site, spec.Method, rawURL, renderedHeaders(spec.Headers, vars), renderedCookieHeader(spec.Cookies, vars), settings.Timeout, proxyType, proxyAddress)
 }
 
 func (a *flareSolverrSiteAccess) proxy(settings Settings) (string, string) {
