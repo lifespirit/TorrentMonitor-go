@@ -1101,7 +1101,7 @@ func parseTrackerURL(raw string) (tracker string, torrentID string, err error) {
 	case "animelayer.ru":
 		path := strings.TrimPrefix(u.Path, "/torrent")
 		torrentID = strings.Trim(path, "/")
-	case "casstudio.tk":
+	case "casstudio.tk", "rutracker.org", "tapochek.net", "nnmclub.to":
 		torrentID = u.Query().Get("t")
 	default:
 		torrentID = firstQueryValue(u)
@@ -1142,6 +1142,8 @@ func BuildTrackerURL(tracker, id string) string {
 			scheme = "https"
 		}
 		return fmt.Sprintf("%s://%s/forum/viewtopic.php?t=%s", scheme, tracker, id)
+	case "tapochek.net":
+		return fmt.Sprintf("https://tapochek.net/viewtopic.php?t=%s", url.QueryEscape(id))
 	case "kinozal.me", "kinozal.tv", "kinozal.guru":
 		return fmt.Sprintf("http://%s/details.php?id=%s", tracker, id)
 	case "rutor.is", "animelayer.ru":
