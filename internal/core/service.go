@@ -669,6 +669,14 @@ func (s *Service) CheckTorrent(ctx context.Context, id int64) (TorrentCheckResul
 		return TorrentCheckResult{}, err
 	}
 
+	// A metadata-only tracker template is fine without a torrent client, but an
+	// enabled client must not silently acknowledge an update without torrent data.
+	if result.Updated && torrentClientConfigured(settings) && len(result.TorrentData) == 0 {
+		missing := errors.New("tracker template did not provide a .torrent download")
+		s.handleTorrentCheckError(ctx, item, missing)
+		return TorrentCheckResult{}, missing
+	}
+
 	clientHash := strings.TrimSpace(item.Hash)
 	clientAddOK := false
 	if len(result.TorrentData) > 0 && torrentClientConfigured(settings) {
