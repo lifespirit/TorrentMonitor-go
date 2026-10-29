@@ -109,15 +109,15 @@ func TestFailedClientUploadDoesNotAcknowledgeTorrentUpdate(t *testing.T) {
 			Extract: map[string]sitetpl.Extract{
 				"title": {Selector: "title"},
 				"updated_at": {
-					Regex: `([0-9]{2}-[А-Яа-я]{3}-[0-9]{2} [0-9]{2}:[0-9]{2})`,
-					Layout: "02-Jan-06 15:04",
-					Locale: "ru",
+					Regex:    `([0-9]{2}-[А-Яа-я]{3}-[0-9]{2} [0-9]{2}:[0-9]{2})`,
+					Layout:   "02-Jan-06 15:04",
+					Locale:   "ru",
 					Timezone: "Europe/Moscow",
 				},
 			},
 		},
 		Download: sitetpl.DownloadFlow{
-			Request: sitetpl.HTTPRequest{URL: topic.URL + "/download"},
+			Request:  sitetpl.HTTPRequest{URL: topic.URL + "/download"},
 			Validate: sitetpl.Validate{BencodeTorrent: true},
 		},
 	})
