@@ -123,6 +123,7 @@ func TestFailedClientUploadDoesNotAcknowledgeTorrentUpdate(t *testing.T) {
 	})
 
 	settings := DefaultSettings()
+	settings.UseTorrent = true
 	settings.TorrentClient = "qbittorrent"
 	settings.TorrentAddress = qb.URL
 	repo := &retryUploadRepo{
