@@ -421,7 +421,14 @@ func addPayloadCookies(payload map[string]any, cookies map[string]string) {
 // by FlareSolverr. Current FlareSolverr releases no longer expose the old
 // binary download API, so this request intentionally uses the native HTTP
 // client while preserving the solved browser identity.
-func (c *Client) Download(ctx context.Context, tracker, rawURL string, headers map[string]string, cookieHeader string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error) {
+func (c *Client) Download(ctx context.Context, tracker, method, rawURL string, headers map[string]string, cookieHeader string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error) {
+	if strings.TrimSpace(method) == "" {
+		method = http.MethodGet
+	}
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method != http.MethodGet && method != http.MethodPost {
+		return nil, fmt.Errorf("unsupported torrent download method %q", method)
+	}
 	if err := validateHTTPURL(rawURL); err != nil {
 		return nil, err
 	}
@@ -448,7 +455,7 @@ func (c *Client) Download(ctx context.Context, tracker, rawURL string, headers m
 		return nil, err
 	}
 	client := &http.Client{Transport: transport, Timeout: timeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
