@@ -64,6 +64,9 @@ func TestClientReusesSessionAndDownloadsWithSolvedIdentity(t *testing.T) {
 		}
 	})
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Method; got != http.MethodPost {
+			t.Fatalf("download method = %q, want POST", got)
+		}
 		if got := r.UserAgent(); got != "flaresolverr-test-agent" {
 			t.Fatalf("User-Agent = %q", got)
 		}
@@ -91,6 +94,7 @@ func TestClientReusesSessionAndDownloadsWithSolvedIdentity(t *testing.T) {
 	data, err := client.Download(
 		context.Background(),
 		"tracker.test",
+		http.MethodPost,
 		srv.URL+"/download",
 		map[string]string{"Referer": srv.URL + "/topic"},
 		"",

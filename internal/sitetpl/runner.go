@@ -312,11 +312,12 @@ type CheckRequest struct {
 }
 
 type Item struct {
-	Tracker   string
-	Name      string
-	URL       string
-	TorrentID string
-	UpdatedAt *time.Time
+	Tracker     string
+	Name        string
+	URL         string
+	TorrentID   string
+	UpdatedAt   *time.Time
+	UpdateTitle bool
 }
 
 type Credential struct {
@@ -362,7 +363,7 @@ type BrowserTurnstileSolver interface {
 // and User-Agent. FlareSolverr itself returns rendered HTML, so torrent files
 // are fetched by the backend's native HTTP client using that solved identity.
 type BrowserDownloader interface {
-	Download(ctx context.Context, tracker string, rawURL string, headers map[string]string, cookieHeader string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error)
+	Download(ctx context.Context, tracker string, method string, rawURL string, headers map[string]string, cookieHeader string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error)
 }
 
 func (r *Runner) SetRegistry(registry *Registry) {
@@ -443,6 +444,13 @@ func (r *Runner) Check(ctx context.Context, req CheckRequest) (CheckResult, erro
 				result.Updated = true
 			}
 		}
+	}
+
+	// Some trackers change a release title without changing (or exposing) a
+	// reliable torrent timestamp. A changed managed title must also trigger
+	// a fresh .torrent download.
+	if req.Item.UpdateTitle && result.Title != "" && result.Title != req.Item.Name {
+		result.Updated = true
 	}
 
 	if result.Updated {
