@@ -66,7 +66,7 @@ topic:
 
   updated_at:
     selector: body
-    regex: "([0-9]{2}-[А-Яа-я]{3}-[0-9]{2} [0-9]{2}:[0-9]{2})"
+    regex: '(?is)<ul[^>]*class=[^>]*inlined\s+middot-separated[^>]*>\s*<li[^>]*>\s*([0-9]{2}-[А-Яа-я]{3}-[0-9]{2} [0-9]{2}:[0-9]{2})'
     layout: "02-Jan-06 15:04"
     locale: ru
     timezone: Europe/Moscow
