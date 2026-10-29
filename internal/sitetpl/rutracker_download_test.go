@@ -16,7 +16,7 @@ type rutrackerMockDownloader struct {
 
 func (m *rutrackerMockDownloader) FetchPage(_ context.Context, tracker, rawURL string) ([]byte, error) {
 	return []byte(`<html><head><title>Updated Release :: RuTracker.org</title></head>
-<body><a href="dl.php?t=42">Скачать</a><span>25-Июн-26 14:30</span></body></html>`), nil
+<body><span>01-Янв-20 01:00</span><a href="dl.php?t=42">Скачать</a><ul class="inlined middot-separated"><li>25-Июн-26 14:30</li></ul></body></html>`), nil
 }
 
 func (m *rutrackerMockDownloader) Download(_ context.Context, tracker, method, rawURL string, headers map[string]string, cookieHeader string, timeout time.Duration, proxyType, proxyAddress string) ([]byte, error) {
@@ -51,6 +51,9 @@ func TestRuTrackerDownloadsWithPostWhenOnlyTitleChanges(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
+	}
+	if result.UpdatedAt == nil || !result.UpdatedAt.Equal(old) {
+		t.Fatalf("parsed wrong RuTracker registration date: %v", result.UpdatedAt)
 	}
 	if !result.Updated || len(result.TorrentData) == 0 {
 		t.Fatalf("title change should trigger a torrent download: %+v", result)
